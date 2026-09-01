@@ -25,11 +25,16 @@ python cli.py minutes path/to/transcript.txt
 ```
 
 **Windows setup:**
-```bash
-pip install -r requirements.txt
-install_autostart.bat   # registers Task Scheduler entry
-# to run without console: start_silent.vbs
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+install_autostart.bat   # creates a launcher in the Startup folder (NOT Task Scheduler)
+Copy-Item hooks\post-merge .git\hooks\post-merge -Force   # auto-restart on git pull
+# to run without console: start_watchdog.vbs
 ```
+
+The repo may be cloned anywhere. Never hardcode an install path — see
+"Install Path, Interpreter & Daemon Lifecycle" below.
 
 **Diagnostic scripts** (not production, just dev helpers): `check_audio.py`, `check_teams.py`, `check_onenote.py`
 
@@ -112,6 +117,50 @@ Action blocks embedded in markdown:
 ### Single Instance
 `main.py` writes a `.lock` file with the current PID. On startup it checks if the PID is still alive; if so, it exits. CLI commands communicate with the running daemon by writing to a `.cli_command` file polled by a listener thread in `main.py`.
 
+### Install Path, Interpreter & Daemon Lifecycle
+
+`tr_env.ps1` is the single source of truth for three questions that used to be
+answered separately (and inconsistently) by the watchdog, the git hook and the
+install skill. Anything that needs to locate, stop or start the app must dot-source
+it rather than reimplement the logic:
+
+```powershell
+. (Join-Path $dir "tr_env.ps1")
+```
+
+| Function | Contract |
+|---|---|
+| `Get-TRRoot` | Install path, or `$null`. Order: `$env:TEAMSRECORDER_HOME` → saved config in `%LOCALAPPDATA%\TeamsRecorder` → current git repo → common locations. Callers must **ask the user** when it returns `$null`. |
+| `Test-TRRoot -Path` | `$true` if the path is a valid clone (`.git` + `main.py` + `tray_app.py`). Deliberately does not check the remote URL, so forks work. |
+| `Get-TRPython -Root` | `@{ Python; Pythonw; Source }`. Prefers the repo's `.venv`, then PATH (skipping the WindowsApps alias), then per-user installs. |
+| `Test-TRRecording -Root` | `$true` if `.pipeline_status.json` has a job in `recording`. |
+| `Get-TRDaemonProcess -Root` | Daemon processes of **this** install, matched by command line. |
+| `Stop-TRDaemon -Root` | Stops them, children before parents. |
+| `Start-TRDaemon -Root` | Ensures the watchdog is up and waits for the daemon to appear. |
+| `Update-TRDependencies -Root` | `pip install -r requirements.txt` using the resolved interpreter. |
+
+**Invariants — breaking any of these has caused a real bug:**
+
+1. **Never hardcode an install path.** Users clone wherever they want. A hardcoded
+   `~\Documents\TeamsRecorder` made the install skill believe the app was missing
+   and clone a *second* copy, leaving two daemons fighting over one `.lock`.
+2. **Never select processes by name.** `Get-Process python | Stop-Process -Force`
+   kills every Python process on the machine (other projects included) and still
+   misses the daemon, which runs as `pythonw.exe`. Filter on `CommandLine`.
+3. **The watchdog is the only thing that launches `main.py`.** It relaunches the
+   daemon 5 s after it dies, so anything else that starts `main.py` creates a
+   duplicate instance.
+4. **Stop the watchdog before the daemon** when updating, or it relaunches the app
+   mid-`pip install`.
+5. **Never restart while `Test-TRRecording` is true.** That is a live meeting.
+6. **One restart procedure: `restart_after_update.ps1`.** Both `hooks/post-merge`
+   and the install skill call it. When the hook is installed it already runs during
+   `git pull`, so the skill must not repeat the work.
+7. **`hooks/*` must stay LF** (enforced by `.gitattributes`). CRLF makes `sh` fail
+   with `bad interpreter: /bin/sh^M`.
+8. **`hooks/pre-push` is maintainer-only.** It triggers the update email to everyone
+   in `team/recipients.txt`.
+
 ## Where to Make Changes
 
 | What you want to change | Where |
@@ -126,6 +175,7 @@ Action blocks embedded in markdown:
 | Tray menu items / pipeline triggers | `tray_app.py` |
 | Web UI layout and filtering | `web/app.js`, `web/app.css` |
 | Storage paths / retention policy | `storage.py` |
+| Install / update / restart flow | `tr_env.ps1` first, then `restart_after_update.ps1`, `hooks/post-merge`, `.claude/skills/teamsrecorder/SKILL.md` |
 
 ## Logging
 

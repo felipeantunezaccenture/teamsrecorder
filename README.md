@@ -24,16 +24,21 @@ Daemon de Windows que detecta automáticamente reuniones de Teams, graba el audi
 
 ### 1. Clonar el repositorio
 
+Puedes clonarlo **donde quieras**: la app y sus scripts descubren la ruta solos, no hay ninguna carpeta obligatoria.
+
 ```bash
-git clone https://github.com/TU_USUARIO/TU_REPO.git TeamsRecorder
+git clone https://github.com/inescgamez99/teamsrecorder.git TeamsRecorder
 cd TeamsRecorder
 ```
 
-### 2. Instalar dependencias Python
+### 2. Crear el entorno virtual e instalar dependencias
 
-```bash
-pip install -r requirements.txt
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+El `.venv` no es opcional del todo: si existe, todos los scripts del proyecto (watchdog, actualización) lo usan con preferencia sobre el Python del sistema. Si prefieres instalar en el Python global, simplemente no crees el `.venv` y usa `pip install -r requirements.txt`.
 
 ### 3. Iniciar sesión en Claude
 
@@ -54,15 +59,23 @@ Ejecuta (doble clic o desde terminal):
 install_autostart.bat
 ```
 
-Esto registra el watchdog en el inicio de Windows. A partir del siguiente reinicio arranca solo.
+Esto crea un lanzador en la carpeta de Inicio de Windows (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`). A partir del siguiente arranque de sesión, el watchdog se levanta solo.
 
-### 5. Arrancar por primera vez (sin reiniciar)
+### 5. Instalar el hook de actualización
 
-```bash
-python main.py
+```powershell
+Copy-Item hooks\post-merge .git\hooks\post-merge -Force
 ```
 
-O doble clic en `start_watchdog.vbs` para arrancar sin ventana de consola.
+Con esto, cada `git pull` reinicia la app con los cambios nuevos automáticamente.
+
+> El hook `hooks/pre-push` **no** debe instalarlo todo el mundo: envía el email de novedades a todo el equipo. Solo lo instala quien mantiene el repositorio.
+
+### 6. Arrancar por primera vez (sin reiniciar Windows)
+
+Doble clic en `start_watchdog.vbs`.
+
+Arranca el watchdog, que es quien lanza y supervisa el daemon. **No lances `python main.py` por tu cuenta si el watchdog está corriendo**: acabarías con dos instancias peleándose por el mismo `.lock`.
 
 El icono gris aparecerá en la bandeja del sistema (esquina inferior derecha). Si está oculto, búscalo en el menú de iconos ocultos (flechita ^).
 
@@ -78,16 +91,29 @@ El icono gris aparecerá en la bandeja del sistema (esquina inferior derecha). S
 
 ## Recibir actualizaciones
 
-Cuando haya una nueva versión:
+**La forma recomendada** es abrir Claude Code y ejecutar:
 
-```bash
-cd TeamsRecorder
-git pull
+```
+/teamsrecorder
 ```
 
-Después reinicia el daemon: click derecho en el icono de la bandeja → "Salir", y vuelve a ejecutar `start_watchdog.vbs` (o reinicia Windows).
+La skill localiza tu instalación (esté donde esté), comprueba que no haya una grabación en curso, actualiza y reinicia. Es el mismo comando tanto si ya lo tienes instalado como si no.
 
-> El watchdog se encarga de reiniciar automáticamente si el daemon se cae.
+**A mano**, desde la carpeta del proyecto:
+
+```bash
+git pull --ff-only
+```
+
+Si tienes el hook `post-merge` instalado (paso 5 de la instalación), el `git pull` ya se encarga de todo: actualiza dependencias y reinicia la app. Si no lo tienes, reinicia después con:
+
+```powershell
+.\restart_after_update.ps1
+```
+
+Ese script es el procedimiento oficial de reinicio y es seguro ejecutarlo a mano: si detecta una grabación en curso, **no reinicia** y te avisa, para no perder la reunión que se está grabando.
+
+> El watchdog se encarga además de reiniciar automáticamente el daemon si se cae por su cuenta.
 
 ## Configuración avanzada
 
@@ -125,9 +151,12 @@ TeamsRecorder/
 ├── web/                    # Frontend (HTML, JS, CSS)
 ├── storage.py              # Rutas y almacenamiento
 ├── config.py               # Configuración global
-├── watchdog.ps1            # Script de auto-reinicio
+├── watchdog.ps1            # Supervisa el daemon y lo relanza si se cae
+├── tr_env.ps1              # Funciones compartidas: ruta, intérprete, arranque/parada
+├── restart_after_update.ps1 # Procedimiento único de reinicio tras actualizar
 ├── start_watchdog.vbs      # Lanzador silencioso del watchdog
 ├── install_autostart.bat   # Registra el arranque con Windows
+├── hooks/                  # Hooks de git (se copian a .git/hooks manualmente)
 └── requirements.txt
 ```
 
@@ -135,10 +164,12 @@ TeamsRecorder/
 
 **El icono no aparece**: Busca en los iconos ocultos (^). Si no está, ejecuta `start_watchdog.vbs`.
 
-**El daemon no arranca / lock file**: Si ves errores de "already running", ejecuta en PowerShell:
+**El daemon no arranca / lock file**: el watchdog limpia solo los `.lock` huérfanos (los de un PID que ya no existe), así que normalmente basta con esperar unos segundos. Si persiste, bórralo desde la carpeta del proyecto:
 ```powershell
-Remove-Item "C:\ruta\a\TeamsRecorder\.lock" -Force
+Remove-Item .lock -Force
 ```
+
+**Hay dos iconos en la bandeja / dos instancias**: lo habitual es haber lanzado `python main.py` a mano teniendo el watchdog ya corriendo. Ciérralas todas y arranca solo con `start_watchdog.vbs`.
 
 **Claude no genera minutas**: Asegúrate de que `claude` está en el PATH y has hecho `claude login`.
 
