@@ -1015,6 +1015,8 @@ html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', system-ui,
 .drawer-cell-input:focus { border-color: var(--accent); }
 
 .drawer-btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.drawer-launch-row { display: flex; justify-content: flex-end; margin-top: 8px; }
+.drawer-save-row { display: flex; justify-content: center; margin-top: 18px; }
 
 .drawer-prompt-label {
   font-size: 10px; font-weight: 600; color: var(--muted);

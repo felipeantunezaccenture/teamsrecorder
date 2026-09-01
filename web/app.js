@@ -82,6 +82,7 @@ const T = {
     btn_edit: 'Editar notas',
     edit_notes_hint: 'Edita las notas directamente y guarda. Los cambios se usarán en HTML y email.',
     notes_saved: 'Notas guardadas',
+    saved: 'Guardado',
     fmt_bold: 'Negrita', fmt_italic: 'Cursiva', fmt_h2: 'Título', fmt_h3: 'Subtítulo', fmt_text: 'Texto normal', fmt_list: 'Lista',
     fmt_table: 'Tabla', table_need_cursor: 'Pon el cursor dentro de una tabla',
     tbl_insert: 'Insertar tabla', tbl_addrow: 'Añadir fila', tbl_delrow: 'Eliminar fila',
@@ -243,6 +244,7 @@ const T = {
     btn_edit: 'Edit notes',
     edit_notes_hint: 'Edit the notes directly and save. Changes are used for HTML and email.',
     notes_saved: 'Notes saved',
+    saved: 'Saved',
     fmt_bold: 'Bold', fmt_italic: 'Italic', fmt_h2: 'Heading', fmt_h3: 'Subheading', fmt_text: 'Normal text', fmt_list: 'List',
     fmt_table: 'Table', table_need_cursor: 'Place the cursor inside a table',
     tbl_insert: 'Insert table', tbl_addrow: 'Add row', tbl_delrow: 'Delete row',
@@ -923,6 +925,18 @@ async function refreshMeetingActions(path) {
   if (!actionsDiv) return;
   const countEl = document.querySelector('#section-actions .actions-count');
   if (countEl) countEl.textContent = t('n_total', actions ? actions.length : 0);
+  // Actualizar el badge de la pestaña "Gestionar acciones" (pendientes)
+  const _pending = (actions || []).filter(a => !a.executed).length;
+  const _tab = document.getElementById('tab-actions');
+  if (_tab) {
+    let _b = _tab.querySelector('.tab-badge');
+    if (_pending > 0) {
+      if (!_b) { _b = document.createElement('span'); _b.className = 'tab-badge'; _tab.appendChild(_b); }
+      _b.textContent = _pending;
+    } else if (_b) {
+      _b.remove();
+    }
+  }
   if (actions && actions.length) {
     renderActionCards(actions, path, actionsDiv, '');
     _prefillWorkingDirs(actions, path);
@@ -1703,11 +1717,13 @@ async function openTaskDetail(taskId) {
     <div class="drawer-field" style="flex:1">
       <div class="drawer-prompt-label">${t('prompt_label')}</div>
       <textarea class="drawer-prompt-textarea" id="drawer-prompt">${escHtml(prompt)}</textarea>
-    </div>
-    <div class="drawer-btn-row">
-      <button class="btn btn-primary btn-sm" id="drawer-launch-btn" onclick="_launchFromDrawer()">${t('btn_launch')}</button>
-      <button class="btn btn-ghost btn-sm" onclick="closeTaskDetail()">${t('regen_cancel')}</button>
-    </div>` : ''}`;
+      <div class="drawer-launch-row">
+        <button class="btn btn-ghost btn-sm" id="drawer-launch-btn" onclick="_launchFromDrawer()">${t('btn_launch')}</button>
+      </div>
+    </div>` : ''}
+    <div class="drawer-save-row">
+      <button class="btn btn-primary btn-sm" id="drawer-save-btn" onclick="_saveDrawer()">${t('save_btn')}</button>
+    </div>`;
 
   // Auto-save fields on change
   const saveField = async (field, getValue) => {
@@ -1747,6 +1763,32 @@ async function openTaskDetail(taskId) {
       savePrompt(task.meeting_path, task.meeting_action_index, val);
     });
   }
+}
+
+async function _saveDrawer() {
+  const id = _drawerTaskId;
+  if (!id) return;
+  const task = _taskData.tasks.find(tk => tk.id === id);
+  const g = elId => document.getElementById(elId);
+  const fields = {
+    title:       g('drawer-title')?.value.trim() || null,
+    status:      g('drawer-status')?.value || null,
+    priority:    g('drawer-priority')?.value || null,
+    assignee:    g('drawer-assignee')?.value.trim() || null,
+    deadline:    g('drawer-deadline')?.value.trim() || null,
+    description: g('drawer-description')?.value.trim() || null,
+  };
+  try { await pywebview.api.update_task(id, fields); } catch (_) {}
+  const promptEl = g('drawer-prompt');
+  if (promptEl && task?.meeting_path) {
+    try { await savePrompt(task.meeting_path, task.meeting_action_index, promptEl.value); } catch (_) {}
+  }
+  const tk = _taskData.tasks.find(t => t.id === id);
+  if (tk) Object.assign(tk, fields);
+  showToast(t('saved'));
+  closeTaskDetail();
+  try { renderTaskBoard(); } catch (_) {}
+  try { refreshPendingBadge(); } catch (_) {}
 }
 
 async function _launchFromDrawer() {
@@ -2248,9 +2290,8 @@ async function confirmMoveToPanel() {
 
 async function deleteAction(path, index, btn) {
   await pywebview.api.delete_action(path, index);
-  const card = document.getElementById('card-' + index);
-  if (card) card.remove();
   showToast(t('toast_deleted'));
+  await refreshMeetingActions(path);  // recalcula "N total" y el badge de la pestaña
 }
 
 async function browseRunDir(index) {
