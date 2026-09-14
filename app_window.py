@@ -31,6 +31,9 @@ _action_runs: dict = {}
 # Estado de regeneración de minutas: path -> {pct, stage_key, done, error}
 _regen_runs: dict = {}
 
+# Estado de regeneración de acciones (con prompt del usuario): path -> {pct, stage, done, error}
+_actions_regen_runs: dict = {}
+
 # Estado de importaciones de transcript: run_id -> {pct, stage, done, error, path}
 _import_runs: dict = {}
 
@@ -1358,6 +1361,98 @@ class AppAPI:
     def get_regen_status(self, path: str) -> dict:
         """Devuelve el progreso de una regeneración en curso: {pct, stage, done, error}."""
         return _regen_runs.get(path, {'pct': 0, 'stage': '', 'done': False, 'error': ''})
+
+    def regenerate_actions(self, path: str, instruction: str, lang: str = '') -> bool:
+        """Regenera SOLO las acciones de una reunión con una instrucción del usuario.
+        Reescribe la sección de Acciones del .md via Claude y re-parsea las acciones."""
+        md_path = Path(path)
+        if not md_path.exists() or not (instruction or '').strip():
+            return False
+
+        m = re.match(r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})', md_path.stem)
+        stem = f"{m.group(1)}-{m.group(2)}-{m.group(3)}_{m.group(4)}-{m.group(5)}" if m else ''
+
+        # Buscar transcript: junto al .md, luego en recordings/; si no, usar el propio .md
+        transcript = ''
+        sib = md_path.with_name(md_path.stem + '_transcript.txt')
+        if sib.exists():
+            try: transcript = sib.read_text(encoding='utf-8')
+            except Exception: pass
+        if not transcript and stem:
+            for folder in [RECORDINGS_DIR / 'processed', RECORDINGS_DIR]:
+                if folder.exists():
+                    cands = list(folder.glob(f"{stem}*_transcript.txt"))
+                    if cands:
+                        try: transcript = cands[0].read_text(encoding='utf-8')
+                        except Exception: pass
+                        break
+        if not transcript:
+            try: transcript = md_path.read_text(encoding='utf-8')
+            except Exception: transcript = ''
+
+        if not lang:
+            lang = _detect_notes_language(md_path)
+
+        _prune_runs(_actions_regen_runs)
+        _actions_regen_runs[path] = {'pct': 5, 'stage': 'start', 'done': False, 'error': ''}
+
+        def _run():
+            import time as _time
+            from minutes_generator import regenerate_actions_section
+            from actions_enricher import enrich_and_save, get_actions_path
+            from html_exporter import export_to_html
+            state = _actions_regen_runs[path]
+            ticker = [True]
+            def _tick():
+                while ticker[0] and state['pct'] < 80:
+                    _time.sleep(3)
+                    if ticker[0] and state['pct'] < 80:
+                        state['pct'] = min(80, state['pct'] + 1)
+            threading.Thread(target=_tick, daemon=True).start()
+            try:
+                state['pct'] = 15; state['stage'] = 'generating'
+                md_text = md_path.read_text(encoding='utf-8')
+                sec_re = re.compile(
+                    r'\n##\s+(?:Acciones Pendientes|Pending Actions|Accions Pendents)\b.*?(?=\n##\s|\Z)',
+                    re.IGNORECASE | re.DOTALL,
+                )
+                cur_m = sec_re.search(md_text)
+                current_section = cur_m.group(0).strip() if cur_m else ''
+                new_section = regenerate_actions_section(transcript, current_section, instruction.strip(), lang)
+                ticker[0] = False
+                if not new_section:
+                    state['error'] = 'Claude returned empty'; state['done'] = True
+                    log.error("regenerate_actions: Claude devolvió vacío")
+                    return
+                state['pct'] = 85; state['stage'] = 'saving'
+                if cur_m:
+                    md_text = md_text[:cur_m.start()] + '\n' + new_section.strip() + '\n' + md_text[cur_m.end():]
+                else:
+                    md_text = md_text.rstrip() + '\n\n' + new_section.strip() + '\n'
+                md_path.write_text(md_text, encoding='utf-8')
+                state['pct'] = 92; state['stage'] = 'html'
+                try:
+                    meta = _parse_stem(md_path.stem)
+                    export_to_html(md_path, meta['title'], open_browser=False)
+                except Exception as e:
+                    log.warning(f"regenerate_actions html: {e}")
+                state['pct'] = 97; state['stage'] = 'actions'
+                ap = get_actions_path(md_path)
+                if ap.exists():
+                    ap.unlink()
+                def _after():
+                    state['pct'] = 100; state['stage'] = 'done'; state['done'] = True
+                enrich_and_save(md_path, PROJECT_DIR.parent, on_done=_after)
+            except Exception as e:
+                ticker[0] = False
+                state['error'] = str(e); state['done'] = True
+                log.error(f"regenerate_actions thread: {e}")
+
+        threading.Thread(target=_run, daemon=True, name='RegenerateActions').start()
+        return True
+
+    def get_actions_regen_status(self, path: str) -> dict:
+        return _actions_regen_runs.get(path, {'pct': 0, 'stage': '', 'done': False, 'error': ''})
 
     def import_transcript(self) -> dict:
         """Abre selector de .txt, genera minutas y acciones a partir del transcript importado."""
