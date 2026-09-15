@@ -82,7 +82,21 @@ Caso C — Cambio en documento Office (Word, Excel, PowerPoint):
 Si una accion tecnica no tiene suficiente detalle, incluye el bloque de todas formas y anota:
 "DETALLE INSUFICIENTE EN REUNION: [lo que falta]"
 
-Todos los bloques deben ser autocontenidos: quien los lea debe poder actuar sin contexto adicional."""
+Todos los bloques deben ser autocontenidos: quien los lea debe poder actuar sin contexto adicional.
+
+ATRIBUCION Y DATOS NO DICHOS (regla estricta):
+El transcripto es texto plano SIN etiquetas de interlocutor: no hay diarizacion,
+asi que no existe informacion sobre quien dijo cada cosa.
+- No atribuyas afirmaciones, compromisos ni decisiones a una persona concreta
+  salvo que el propio transcripto lo diga de forma explicita (alguien se presenta,
+  se dirige a otro por su nombre, o se cita "X dijo que...").
+- Si lo deduces por contexto pero no esta dicho, redactalo en impersonal
+  ("se acordo", "se planteo", "queda pendiente") o marcalo como
+  "(atribucion inferida)". Nunca lo presentes como hecho.
+- Lo mismo con fechas, horas y cifras: si no aparecen en el transcripto, escribe
+  "sin concretar". No deduzcas una hora ni una fecha a partir del contexto.
+- En la seccion de asistentes, lista solo los nombres que aparezcan en el
+  transcripto, e indica que la lista puede estar incompleta."""
 
 
 _LANG_INSTRUCTIONS = {
