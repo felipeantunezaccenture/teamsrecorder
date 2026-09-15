@@ -326,6 +326,20 @@ def set_meeting_project_id(minutes_path: Path, project_id: str) -> bool:
         return False
 
 
+def _sync_project_folder(md: Path) -> None:
+    """Archiva el resumen bajo el proyecto que dice el _actions.json.
+
+    Se llama también para las reuniones que YA tenían project_id: la carpeta
+    puede no corresponder (la elegía otro detector) o no existir (la reunión es
+    anterior a la creación del proyecto). Es idempotente.
+    """
+    try:
+        from project_context import sync_meeting_summary
+        sync_meeting_summary(md)
+    except Exception as e:
+        log.warning(f"sync_meeting_summary {md.stem}: {e}")
+
+
 def detect_projects_for_all_meetings() -> dict:
     """Run Claude-based project detection for all meetings that don't yet have a project_id.
     Returns {filename: project_id} for every meeting processed."""
@@ -338,6 +352,7 @@ def detect_projects_for_all_meetings() -> dict:
                 data = json.loads(ap.read_text(encoding='utf-8'))
                 if 'project_id' in data:
                     results[md.name] = data['project_id']
+                    _sync_project_folder(md)
                     continue
             except Exception:
                 pass
@@ -350,6 +365,7 @@ def detect_projects_for_all_meetings() -> dict:
             }
             ap.write_text(json.dumps(stub, ensure_ascii=False, indent=2), encoding='utf-8')
         _detect_and_save_project(md, None)
+        _sync_project_folder(md)
         try:
             results[md.name] = json.loads(ap.read_text(encoding='utf-8')).get('project_id', 'none')
         except Exception:

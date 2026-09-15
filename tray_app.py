@@ -493,14 +493,10 @@ class TrayApp:
         minutes_path = get_minutes_path(wav_path, title)
         save_minutes(content, minutes_path)
 
-        if _proj:
-            try:
-                from project_context import add_meeting_summary
-                _dm = re.match(r'(\d{4}-\d{2}-\d{2})', wav_path.stem)
-                add_meeting_summary(_proj.get('id', ''), minutes_path.stem, title,
-                                    _dm.group(1) if _dm else '', content)
-            except Exception as e:
-                log.warning(f"add_meeting_summary: {e}")
+        # El archivado en la carpeta del proyecto NO se hace aquí: _proj viene de
+        # detect_project() (palabras clave sobre el transcript) y solo sirve para
+        # elegir el contexto que se pasa al LLM. El proyecto definitivo lo decide
+        # enrich_and_save más abajo, y el archivado ocurre en su callback.
 
         try:
             transcript_copy = minutes_path.with_name(minutes_path.stem + '_transcript.txt')
@@ -549,6 +545,15 @@ class TrayApp:
             self._current_job = {}
             self.set_processing('')
             self._notify('TeamsRecorder', s['ready'])
+            # Aquí ya existe el _actions.json con el project_id definitivo, así
+            # que este es el único punto donde se decide la carpeta del proyecto.
+            try:
+                from project_context import sync_meeting_summary
+                _pid = sync_meeting_summary(minutes_path)
+                if _pid:
+                    log.info(f"Reunión archivada en el proyecto '{_pid}'")
+            except Exception as e:
+                log.warning(f"sync_meeting_summary on_done: {e}")
             try:
                 from project_exporter import export_to_project_folder
                 if export_to_project_folder(minutes_path, _transcript_for_export):

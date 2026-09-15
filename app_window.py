@@ -850,7 +850,18 @@ class AppAPI:
         """Manually assign (or override) the project for a meeting."""
         try:
             from actions_enricher import set_meeting_project_id
-            return set_meeting_project_id(Path(path), project_id)
+            ok = set_meeting_project_id(Path(path), project_id)
+            if ok:
+                # Reubicar también el resumen en project_docs/. Antes esto solo
+                # cambiaba el project_id del _actions.json y la carpeta se
+                # quedaba con la asignación anterior, o sin crear si la reunión
+                # es previa a la existencia del proyecto.
+                try:
+                    from project_context import sync_meeting_summary
+                    sync_meeting_summary(Path(path))
+                except Exception as e:
+                    log.warning(f"set_meeting_project sync: {e}")
+            return ok
         except Exception as e:
             log.error(f"set_meeting_project: {e}")
             return False
