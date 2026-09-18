@@ -1,0 +1,11 @@
+# Dependencias solo para desarrollo y tests.
+# NO van en requirements.txt: ese lo consume setup.bat, que es como instalan
+# la herramienta los companeros, y no deben cargar con el tooling de test.
+#
+#   pip install -r requirements-dev.txt
+#   pre-commit install
+pytest>=8.0
+pytest-cov>=5.0
+ruff>=0.6
+diff-cover>=9.0
+pre-commit>=3.7
