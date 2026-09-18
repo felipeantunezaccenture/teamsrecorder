@@ -51,12 +51,21 @@ def test_construir_tray_no_arranca_hilos(tray):
 
 
 def test_tasks_store_no_escribe_en_el_tablero_real(tr_dirs):
+    """El tablero real esta en .gitignore, asi que en un clon limpio (CI) no
+    existe y en la maquina del usuario si. Se comprueban los dos casos: que no
+    se cree, y que si ya estaba no se toque."""
     import tasks_store
 
+    real = REPO / 'tasks.json'
+    antes = real.read_bytes() if real.exists() else None
+
     tasks_store.create_task(project_id='none', title='tarea de prueba')
-    assert (tr_dirs / 'tasks.json').exists()
-    contenido = (REPO / 'tasks.json').read_text(encoding='utf-8')
-    assert 'tarea de prueba' not in contenido
+
+    assert (tr_dirs / 'tasks.json').exists(), "la tarea deberia ir al tablero temporal"
+    if antes is None:
+        assert not real.exists(), "el test creo el tablero real"
+    else:
+        assert real.read_bytes() == antes, "el test modifico el tablero real"
 
 
 def test_no_queda_handler_escribiendo_en_el_log_real():
