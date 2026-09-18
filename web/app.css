@@ -855,6 +855,17 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
 .pipeline-tab.idle  { opacity: 0; pointer-events: none; }
 .pipeline-tab svg   { flex-shrink: 0; opacity: 0.75; }
 
+.pipeline-job-cancel {
+  margin-left: auto; flex-shrink: 0;
+  width: 18px; height: 18px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: 4px;
+  color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer;
+  opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.pipeline-job-card:hover .pipeline-job-cancel { opacity: 1; }
+.pipeline-job-cancel:hover { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
 .pipeline-tab-dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--muted);
 }

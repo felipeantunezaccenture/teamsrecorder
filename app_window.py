@@ -846,6 +846,24 @@ class AppAPI:
             log.warning(f"purge_trash_meeting: {e}")
             return False
 
+    def cancel_job(self, stem: str) -> bool:
+        """Descarta un trabajo del pipeline: en cola o ya transcribiendo.
+
+        El audio y lo que se haya generado van a la papelera, no se borran.
+        Se comunica por fichero porque el daemon corre en otro proceso (mismo
+        mecanismo que .cli_command).
+        """
+        if not stem:
+            return False
+        try:
+            from tray_app import _append_cancel_signal
+            _append_cancel_signal(stem)
+            log.info(f"cancel_job solicitado: {stem}")
+            return True
+        except Exception as e:
+            log.error(f"cancel_job: {e}")
+            return False
+
     def set_meeting_project(self, path: str, project_id: str) -> bool:
         """Manually assign (or override) the project for a meeting."""
         try:

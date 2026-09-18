@@ -19,6 +19,7 @@ project_docs/
 startup_error.txt
 .pipeline_status.json
 .pending_notification.txt
+.cancelled_jobs.txt
 .app_window.pid
 .app_navigate.txt
 
