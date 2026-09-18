@@ -130,3 +130,55 @@ Prefiero 30 tests que importan a 300 que prueban el framework.
 
 `.gitignore` ignora `*.wav`, así que los tests **fabrican** su audio en cada
 ejecución con `wav_factory`. No metas binarios en el repo.
+
+---
+
+## Defectos encontrados al escribir la suite
+
+Nueve, todos **fijados con el comportamiento actual** en lugar de arreglados: la
+regla acordada era no tocar la app hasta tener la red puesta. Cada test lleva
+`DEFECTO` en el nombre y explica la consecuencia, así que arreglarlos es cuestión
+de invertir la aserción y ver el test fallar primero.
+
+Ordenados por lo que cuestan si se manifiestan:
+
+| # | Dónde | Qué pasa |
+|---|---|---|
+| 1 | `inbox_watcher._process:75` | Con ffmpeg disponible (el caso normal), un `.wav` del inbox se convierte a 16 kHz y **el original sobrescribe la conversión**. Nunca se remuestrea |
+| 2 | `app_window.recover_meeting:820` | `if not str(dst_dir)` es rama **muerta** (`str(Path(''))` es `'.'`). Un `orig_dir` vacío restaura el fichero en el directorio de trabajo del proceso |
+| 3 | `app_window.recover_meeting:829` | El `rmtree` corre **incondicionalmente**: si un `move` falla, se borra la papelera, se pierde el fichero y devuelve `True` |
+| 4 | `outlook_sender._name_score` | `'Comite de la Direccion'` vs `'Retro de la Semana'` puntúa **exactamente 0.5**, y el umbral es `>= 0.5`. Los destinatarios pueden venir de otra reunión |
+| 5 | `tray_app.has_pending_session` | Contención bidireccional de subcadenas: una reunión `'AI'` casa con `'Mail Review'` y **las dos se fusionan en una minuta** |
+| 6 | `tray_app._recover_pending:778` | Encola en la `Queue` pero no en `_pipeline_queued`: los trabajos recuperados al arrancar no se pueden descartar ni salen como `queued` |
+| 7 | `tasks_store.create_task:106` | El bucket por defecto es `'pendiente'`, que **no existe** en `buckets.json`. Tareas en un bucket fantasma |
+| 8 | `tasks_store.update_task` | `'deadline'` está en la whitelist pero se persiste `'end_date'`: editar por la clave antigua crea un campo huérfano que la UI no lee |
+| 9 | `tasks_store.delete_task` | Solo baja un nivel: borrar un abuelo deja al nieto apuntando a un `parent_id` inexistente |
+
+Otros dos menores, también fijados: el cuerpo del HTML no se escapa (el título
+sí), y el relleno de celdas de `_md_table_to_html` no funciona nunca porque su
+guarda es siempre cierta.
+
+### Y un riesgo que no es un defecto, es una cuenta atrás
+
+`sounddevice` 0.5.6 hace `data.shape = -1, channels` en el callback de PortAudio,
+y **numpy 2.5 lo deprecó**. Hoy solo avisa. Cuando numpy lo elimine, el callback
+lanzará en cada bloque de audio y **la grabación dejará de capturar**. El filtro
+de avisos de `pyproject.toml` lo ignora explícitamente y explica por qué: hay que
+vigilar la versión de `sounddevice`, no taparlo y olvidarlo.
+
+## Tres cosas que aprendí escribiéndola
+
+**Un test que pasa con y sin el arreglo no vale.** Ya está arriba, pero se repite
+porque es la única regla que separa una suite útil de una decorativa.
+
+**El análisis previo se equivocó cinco veces, y cuatro fueron a favor del
+código.** `extract_title_from_minutes` sí tolera espacios iniciales; el regex del
+porcentaje sí exige el signo `%`; `shutil.move` no falla con el destino ocupado
+(sobrescribe); el consumidor externo no depende de `projects.json`. Medir antes de
+escribir la aserción, siempre.
+
+**La mitad de los fallos iniciales fueron de los tests, no del código.** Fixtures
+con la palabra `Tarea` que el parser descarta, un `basetemp` dentro del repo que
+invalidaba mi propia comprobación de aislamiento, un `filterwarnings` que mataba
+el callback de audio. Cuando un test nuevo falla, el sospechoso número uno es el
+test.
