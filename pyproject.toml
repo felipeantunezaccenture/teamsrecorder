@@ -67,7 +67,21 @@ ignore = [
     "G004",
     # Lineas largas en los diccionarios de i18n y en los prompts.
     "E501",
+    # E701/E702: el codigo define las paletas de color en una linea a
+    # proposito (`BG = '#1e1e2e'; CARD = '#313244'; FG = '#cdd6f4'`), y son
+    # 45 de los 102 avisos del codigo heredado. Activarlas convertiria
+    # cualquier commit sobre un fichero de GUI en una limpieza masiva, y un
+    # gate que bloquea un hotfix por estilo se acaba desactivando.
+    "E701",
+    "E702",
 ]
+
+# DEUDA DE LINT CONOCIDA (18/09/2026): quedan 57 avisos en el codigo
+# heredado, con un maximo de 10 por fichero y 44 auto-arreglables. No se
+# arreglan de golpe: seria un cambio masivo sin tests que lo cubra. El hook de
+# pre-commit solo linta los ficheros que entran en el commit, asi que cada
+# fichero se limpia cuando se toca. audio_recorder.py y teams_detector.py ya
+# estan a cero.
 
 [tool.ruff.lint.per-file-ignores]
 # Los tests importan modulos despues de manipular sys.path.
