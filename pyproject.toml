@@ -37,7 +37,6 @@ omit = [
     # Scripts de diagnostico manual, no forman parte de la app.
     "check_*.py",
     "diagnostico.py",
-    "_merge_wavs.py",
     # GUI pura: un test aqui probaria tkinter, no la app.
     "popup.py",
     "tk_thread.py",
