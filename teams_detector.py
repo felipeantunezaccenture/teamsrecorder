@@ -156,6 +156,7 @@ class TeamsCallDetector:
         self._stale_title_polls = 20
         self._idle_title_counts: dict[str, int] = {}
         self._stale_titles: set[str] = set()
+        self._stale_logged: set[str] = set()
         self._required_name_chg = max(required_confirmations * 5, 10)  # polls cambio de reunión (10 = 30s)
         self._in_call = False
         self._call_streak = 0
@@ -304,6 +305,9 @@ class TeamsCallDetector:
                         name for name, n in self._idle_title_counts.items()
                         if n >= self._stale_title_polls
                     }
+                    # Olvidar el aviso de los títulos que ya no están, para que
+                    # si el mismo nombre reaparece se vuelva a avisar una vez.
+                    self._stale_logged &= self._stale_titles
 
                     # Mejor sin nombre que con el de otra reunión: el fichero de
                     # audio acababa llamándose como una reunión de horas antes.
@@ -312,8 +316,13 @@ class TeamsCallDetector:
                         if fresh:
                             detected_name = fresh[0]
                         else:
-                            log.info(f"Ignorando título residual '{detected_name}' "
-                                     "(ventana de una reunión ya terminada)")
+                            # Una vez por título, no en cada poll: una ventana de
+                            # Teams abierta toda la tarde escribía una línea cada
+                            # 3s (3,7 MB de log) y tapaba todo lo demás.
+                            if detected_name not in self._stale_logged:
+                                self._stale_logged.add(detected_name)
+                                log.info(f"Ignorando título residual '{detected_name}' "
+                                         "(ventana de una reunión ya terminada)")
                             detected_name = None
 
                     # Detectar cuándo el título vuelve a ser genérico (señal fuerte de fin)
