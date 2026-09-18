@@ -299,10 +299,20 @@ def fake_outlook(monkeypatch):
     """
     import outlook_sender
 
+    class FakeRecipients(list):
+        """Colección COM de destinatarios: se rellena con .Add(direccion)."""
+
+        def Add(self, address):
+            entrada = type('Recipient', (), {'Address': address, 'Resolved': True})()
+            self.append(entrada)
+            return entrada
+
     class FakeMail:
         def __init__(self):
             self.displayed = False
-            self.To = self.Subject = self.HTMLBody = ''
+            self.To = self.Subject = self.HTMLBody = self.Body = ''
+            self.Recipients = FakeRecipients()
+            self.Attachments = FakeRecipients()
 
         def Display(self):
             self.displayed = True
