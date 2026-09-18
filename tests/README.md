@@ -135,7 +135,7 @@ ejecución con `wav_factory`. No metas binarios en el repo.
 
 ## Defectos encontrados al escribir la suite
 
-Nueve, todos **fijados con el comportamiento actual** en lugar de arreglados: la
+Quince, todos **fijados con el comportamiento actual** en lugar de arreglados: la
 regla acordada era no tocar la app hasta tener la red puesta. Cada test lleva
 `DEFECTO` en el nombre y explica la consecuencia, así que arreglarlos es cuestión
 de invertir la aserción y ver el test fallar primero.
@@ -154,9 +154,12 @@ Ordenados por lo que cuestan si se manifiestan:
 | 8 | `tasks_store.update_task` | `'deadline'` está en la whitelist pero se persiste `'end_date'`: editar por la clave antigua crea un campo huérfano que la UI no lee |
 | 9 | `tasks_store.delete_task` | Solo baja un nivel: borrar un abuelo deja al nieto apuntando a un `parent_id` inexistente |
 
-Otros dos menores, también fijados: el cuerpo del HTML no se escapa (el título
-sí), y el relleno de celdas de `_md_table_to_html` no funciona nunca porque su
-guarda es siempre cierta.
+| 10 | `html_exporter._md_to_html_body` | El cuerpo del HTML no se escapa (el título sí). Una etiqueta en las minutas acaba ejecutándose en el navegador |
+| 11 | `outlook_sender._md_table_to_html:267` | El relleno de celdas no funciona nunca: su guarda es siempre cierta. Las tablas del email salen desalineadas |
+| 12 | `tasks_store.migrate_panel_actions` | Marca `migrated=True` aunque no importe nada. En el primer arranque de una instalación nueva con `minutes/` vacío, deja la migración **inutilizada para siempre** |
+| 13 | `tasks_store.migrate_panel_actions` | Hardcodea el mismo bucket fantasma `'pendiente'` que el defecto 7 |
+| 14 | `app_window.create_action` | **Reutiliza el índice de la última acción borrada.** Si el panel tiene una referencia sin refrescar, apunta a otra acción. Esto *corrige* lo que afirmaba el análisis previo, que decía lo contrario |
+| 15 | `app_window.update_action` | Devuelve `True` aunque no encuentre el índice: el panel cree que guardó y no cambió nada. Y `save_stickies` se traga las excepciones y devuelve `None`, así que el JS nunca sabe si se guardó |
 
 ### Y un riesgo que no es un defecto, es una cuenta atrás
 
