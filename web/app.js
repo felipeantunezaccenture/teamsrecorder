@@ -76,6 +76,12 @@ const T = {
     sticky_add: 'Añadir nota adhesiva', sticky_min: 'Minimizar', sticky_del: 'Eliminar', sticky_ph: 'Nota...',
     pin: 'Fijar reunión', unpin: 'Desfijar reunión', pinned: 'Fijadas',
     add_action: 'Añadir acción', toast_action_added: 'Acción añadida',
+    regen_actions: 'Regenerar acciones',
+    regen_actions_hint: 'Describe qué cambios quieres en las acciones (agrupar, añadir, quitar, reescribir...). Claude las regenerará.',
+    regen_actions_ph: 'Ej: agrupa los cambios del HTML en una sola acción y añade una para revisar el email',
+    regen_actions_confirm: 'Regenerar', regen_actions_working: 'Regenerando...',
+    regen_actions_done: 'Acciones regeneradas', regen_actions_error: 'No se pudieron regenerar las acciones',
+    no_owner: 'Sin responsable',
     action_title_ph: 'Descripción de la acción...', action_assignee_ph: 'Responsable (opcional)', action_deadline_ph: 'Fecha límite (opcional)',
     n_total: n => `${n} en total`,
     no_project_label: 'Sin proyecto',
@@ -286,6 +292,12 @@ const T = {
     sticky_add: 'Add sticky note', sticky_min: 'Minimize', sticky_del: 'Delete', sticky_ph: 'Note...',
     pin: 'Pin meeting', unpin: 'Unpin meeting', pinned: 'Pinned',
     add_action: 'Add action', toast_action_added: 'Action added',
+    regen_actions: 'Regenerate actions',
+    regen_actions_hint: 'Describe the changes you want in the actions (group, add, remove, rewrite...). Claude will regenerate them.',
+    regen_actions_ph: 'e.g.: group the HTML edits into one action and add one to review the email',
+    regen_actions_confirm: 'Regenerate', regen_actions_working: 'Regenerating...',
+    regen_actions_done: 'Actions regenerated', regen_actions_error: 'Could not regenerate actions',
+    no_owner: 'No owner',
     action_title_ph: 'Action description...', action_assignee_ph: 'Owner (optional)', action_deadline_ph: 'Deadline (optional)',
     n_total: n => `${n} total`,
     no_project_label: 'No project',
@@ -496,6 +508,12 @@ const T = {
     sticky_add: 'Afegir nota adhesiva', sticky_min: 'Minimitzar', sticky_del: 'Eliminar', sticky_ph: 'Nota...',
     pin: 'Fixar reunió', unpin: 'Desfixar reunió', pinned: 'Fixades',
     add_action: 'Afegir acció', toast_action_added: 'Acció afegida',
+    regen_actions: 'Regenerar accions',
+    regen_actions_hint: 'Descriu quins canvis vols a les accions (agrupar, afegir, treure, reescriure...). Claude les regenerarà.',
+    regen_actions_ph: 'Ex: agrupa els canvis de l\'HTML en una sola acció i afegeix-ne una per revisar l\'email',
+    regen_actions_confirm: 'Regenerar', regen_actions_working: 'Regenerant...',
+    regen_actions_done: 'Accions regenerades', regen_actions_error: 'No s\'han pogut regenerar les accions',
+    no_owner: 'Sense responsable',
     action_title_ph: 'Descripció de l\'acció...', action_assignee_ph: 'Responsable (opcional)', action_deadline_ph: 'Data límit (opcional)',
     n_total: n => `${n} en total`,
     no_project_label: 'Sense projecte',
@@ -1255,8 +1273,10 @@ async function openMeeting(path) {
           <div class="section-label">${t('section_actions')}</div>
           <div class="actions-count" style="margin-left:auto">${t('n_total', actions ? actions.length : 0)}</div>
           <button class="btn btn-ghost btn-sm" id="btn-add-action" style="margin-left:8px">+ ${t('add_action')}</button>
+          <button class="btn btn-ghost btn-sm" id="btn-regen-actions" style="margin-left:6px" title="${t('regen_actions')}">✦ ${t('regen_actions')}</button>
         </div>
         <div id="add-action-form" class="add-action-form" style="display:none"></div>
+        <div id="regen-actions-form" class="add-action-form" style="display:none"></div>
         <div id="meeting-actions"></div>
       </div>
       <div class="transcript-section hidden" id="section-transcript">
@@ -1335,6 +1355,7 @@ async function openMeeting(path) {
   });
 
   document.getElementById('btn-add-action')?.addEventListener('click', () => toggleAddActionForm(path));
+  document.getElementById('btn-regen-actions')?.addEventListener('click', () => toggleRegenActionsForm(path));
 
   document.getElementById('btn-rename-meeting')?.addEventListener('click', () => {
     const titleEl = document.getElementById('detail-title-text');
@@ -1398,6 +1419,47 @@ function toggleAddActionForm(path) {
   titleEl.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
 }
 
+function toggleRegenActionsForm(path) {
+  const form = document.getElementById('regen-actions-form');
+  if (!form) return;
+  if (form.style.display !== 'none') { form.style.display = 'none'; form.innerHTML = ''; return; }
+  // Cerrar el de añadir si estaba abierto
+  const addForm = document.getElementById('add-action-form');
+  if (addForm) { addForm.style.display = 'none'; addForm.innerHTML = ''; }
+  form.style.display = 'block';
+  form.innerHTML = `
+    <div class="notes-edit-hint">${t('regen_actions_hint')}</div>
+    <textarea id="regen-actions-input" class="settings-text-input" rows="3" placeholder="${t('regen_actions_ph')}"></textarea>
+    <div class="add-action-btns">
+      <button class="btn btn-primary btn-sm" id="regen-actions-go">✦ ${t('regen_actions_confirm')}</button>
+      <button class="btn btn-ghost btn-sm" id="regen-actions-cancel">${t('regen_cancel')}</button>
+    </div>`;
+  const input = document.getElementById('regen-actions-input');
+  input.focus();
+  const close = () => { form.style.display = 'none'; form.innerHTML = ''; };
+  document.getElementById('regen-actions-cancel').onclick = close;
+  document.getElementById('regen-actions-go').onclick = async () => {
+    const instruction = input.value.trim();
+    if (!instruction) { input.focus(); return; }
+    const goBtn = document.getElementById('regen-actions-go');
+    goBtn.disabled = true;
+    goBtn.textContent = t('regen_actions_working');
+    const ok = await pywebview.api.regenerate_actions(path, instruction);
+    if (!ok) { showToast(t('regen_actions_error')); goBtn.disabled = false; goBtn.textContent = '✦ ' + t('regen_actions_confirm'); return; }
+    // Poll hasta que termine
+    const poll = setInterval(async () => {
+      let st = { done: false };
+      try { st = await pywebview.api.get_actions_regen_status(path); } catch (_) {}
+      if (st && st.done) {
+        clearInterval(poll);
+        close();
+        if (st.error) { showToast(t('regen_actions_error')); }
+        else { showToast(t('regen_actions_done')); await refreshMeetingActions(path); }
+      }
+    }, 1500);
+  };
+}
+
 async function refreshMeetingActions(path) {
   const actions = await pywebview.api.get_actions(path);
   const actionsDiv = document.getElementById('meeting-actions');
@@ -1436,8 +1498,20 @@ function actionMetaHtml(a, meetingDate, claudeExec) {
 
 // ── Tarjetas de acciones (vista Notas) ────────────────────────────────────────
 
+// Normaliza el responsable para agrupar: mismas personas → misma clave,
+// sin importar el orden ni el marcador "(Claude)".
+function _ownerKey(assignee) {
+  const raw = (assignee || '').trim();
+  if (!raw) return { key: '__none__', label: t('no_owner') };
+  const cleaned = raw.replace(/\((?:claude|manual)\)/ig, '').replace(/\s+/g, ' ').trim();
+  const parts = cleaned.split(/\s*[\/,&]\s*|\s+y\s+|\s+and\s+/i).map(p => p.trim()).filter(Boolean);
+  if (!parts.length) return { key: '__none__', label: t('no_owner') };
+  const key = parts.map(p => p.toLowerCase()).sort().join('|');
+  return { key, label: parts.join(' / ') };
+}
+
 function renderActionCards(actions, path, container, meetingDate) {
-  container.innerHTML = actions.map(a => {
+  const _card = (a) => {
     const prompt = a.prompt_enriched || a.prompt_original || '';
     const claudeExec = a.claude_executable || (a.type && a.type !== 'human' && prompt.trim().length > 0);
     const inPanel = a.in_panel === true;
@@ -1493,7 +1567,21 @@ function renderActionCards(actions, path, container, meetingDate) {
         </div>
       </div>` : ''}
     </div>`;
-  }).join('');
+  };
+
+  // Agrupar por owner (responsable) normalizado: mismas personas = mismo grupo
+  // (ignora el orden de los nombres y el marcador "(Claude)"), conservando el orden de aparición
+  const groups = {};   // key -> { label, items }
+  const order = [];
+  actions.forEach(a => {
+    const { key, label } = _ownerKey(a.assignee);
+    if (!groups[key]) { groups[key] = { label, items: [] }; order.push(key); }
+    groups[key].items.push(a);
+  });
+  container.innerHTML = order.map(key => `
+    <div class="action-owner-eyebrow">${escHtml(groups[key].label)}</div>
+    ${groups[key].items.map(_card).join('')}
+  `).join('');
 
   container.querySelectorAll('[data-del]').forEach(el => {
     el.addEventListener('click', () => deleteAction(path, parseInt(el.dataset.del), el));

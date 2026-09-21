@@ -38,6 +38,20 @@ La primera linea del cuerpo de las minutas (justo despues del TITULO y la linea 
 Hay UNA SOLA seccion para todas las acciones: "Acciones Pendientes" (o "Pending Actions" en ingles).
 No uses secciones separadas de "Next Steps", "Cambios Tecnicos" ni similares.
 
+### Regla de AGRUPACION (muy importante)
+
+Agrupa en UNA SOLA accion todas las sub-tareas que afecten al MISMO entregable, archivo u objetivo.
+NO crees una fila por cada pequeño cambio.
+
+- Ejemplo: si hay que editar 5 cosas del mismo HTML deck, es UNA sola accion
+  ("Editar el HTML deck: X, Y, Z...") con los 5 puntos como sub-pasos DENTRO de su
+  bloque tecnico — NO 5 filas separadas en la tabla.
+- Separa en acciones/filas distintas SOLO cuando sean entregables u objetivos
+  claramente independientes, o cuando tengan distinto responsable o distinta fecha limite.
+- En la tabla aparece UNA fila por accion agrupada, con una descripcion que resuma el conjunto.
+- Los sub-pasos concretos van DENTRO del bloque tecnico correspondiente (Parte 2),
+  como una lista con viñetas (checklist).
+
 Esta seccion tiene dos partes:
 
 ### Parte 1: Tabla de acciones (TODAS las acciones de la reunion)
@@ -69,7 +83,11 @@ Caso B — Instruccion tecnica sin codigo concreto (UI, diseño, arquitectura, e
 [Instruccion directa lista para Claude Code. Debe:
  - Empezar con verbo imperativo (Crea, Modifica, Añade, Elimina, Refactoriza...)
  - Referenciar archivos o componentes especificos si se mencionaron
- - Ser lo suficientemente especifica para ser accionable]
+ - Ser lo suficientemente especifica para ser accionable
+ - Si la accion AGRUPA varios cambios sobre el mismo entregable, listalos como
+   checklist de sub-pasos:
+     - [ ] sub-paso 1
+     - [ ] sub-paso 2]
 ~~~
 
 Caso C — Cambio en documento Office (Word, Excel, PowerPoint):
@@ -268,6 +286,85 @@ def _generate_via_cli(transcript: str, recording_path: Path, extra_context: str 
         return stdout.strip()
     except Exception as e:
         log.error(f"Error llamando claude CLI: {e}")
+        return None
+
+
+def regenerate_actions_section(transcript: str, current_actions_md: str,
+                               instruction: str, language: str = 'auto') -> str | None:
+    """Reescribe SOLO la sección de Acciones Pendientes según la instrucción del usuario.
+    Devuelve el markdown de la nueva sección (empezando por '## ...') o None."""
+    if not _CLAUDE_BIN:
+        log.error("claude CLI no encontrado en PATH")
+        return None
+
+    lang = language if language in _LANG_INSTRUCTIONS else 'auto'
+    heading = 'Pending Actions' if lang == 'en' else ('Accions Pendents' if lang == 'ca' else 'Acciones Pendientes')
+    lang_instruction = _LANG_INSTRUCTIONS[lang]
+
+    prompt = f"""Eres un asistente que edita la seccion de Acciones de una reunion de trabajo.
+{lang_instruction}
+
+Te doy el transcript de la reunion, la seccion de Acciones ACTUAL y una instruccion con los cambios que quiere el usuario. Aplica esos cambios y devuelve SOLO la seccion de Acciones reescrita.
+
+## Formato OBLIGATORIO de la respuesta
+Empieza EXACTAMENTE con esta linea:
+## {heading}
+
+Despues:
+1) Una tabla con TODAS las acciones — columnas: | Accion | Responsable | Fecha limite |. Marca las ejecutables por Claude con "(Claude)" junto al responsable.
+2) Despues de la tabla, un bloque tecnico por cada accion "(Claude)":
+   - Instruccion sin codigo: ~~~instruction-for-claude ... ~~~
+   - Cambio en documento Office: ~~~document-change ... ~~~
+   - Cambio de codigo: ~~~lenguaje con "// INSTRUCCION PARA CLAUDE CODE:" ... ~~~
+
+## Regla de AGRUPACION (muy importante)
+Agrupa en UNA SOLA accion todas las sub-tareas que afecten al MISMO entregable/archivo/objetivo (una fila en la tabla), y pon los sub-pasos como checklist ("- [ ] ...") DENTRO de su bloque tecnico. No crees una fila por cada pequeño cambio.
+
+No incluyas ninguna otra seccion, ni el titulo de la reunion, ni texto extra. Responde solo con el markdown de la seccion de Acciones.
+
+## Transcript
+{transcript}
+
+## Seccion de Acciones ACTUAL
+{current_actions_md or '(vacía)'}
+
+## Cambios solicitados por el usuario
+{instruction}"""
+
+    try:
+        if os.name == 'nt':
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 0
+            CREATE_NO_WINDOW = 0x08000000
+        else:
+            si = None
+            CREATE_NO_WINDOW = 0
+
+        proc = subprocess.Popen(
+            [_CLAUDE_BIN, '-p'],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding='utf-8', env=_clean_env(),
+            startupinfo=si if os.name == 'nt' else None,
+            creationflags=CREATE_NO_WINDOW if os.name == 'nt' else 0,
+        )
+        try:
+            stdout, stderr = proc.communicate(input=prompt, timeout=900)
+        except subprocess.TimeoutExpired:
+            proc.kill(); proc.communicate()
+            log.error("regenerate_actions_section: timeout (900s)")
+            return None
+        if proc.returncode != 0:
+            log.error(f"regenerate_actions_section: claude -p error (rc={proc.returncode}): {stderr[:300]}")
+            return None
+        out = (stdout or '').strip()
+        if not out:
+            return None
+        if not out.lstrip().startswith('#'):
+            out = f"## {heading}\n\n{out}"
+        return out
+    except Exception as e:
+        log.error(f"regenerate_actions_section: {e}")
         return None
 
 
