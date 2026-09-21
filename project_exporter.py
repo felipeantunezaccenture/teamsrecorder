@@ -116,7 +116,7 @@ def export_to_project_folder(minutes_path: Path, transcript_txt: str | None = No
         email_dir = proj_dir / 'Email'
         email_dir.mkdir(parents=True, exist_ok=True)
         try:
-            email_html = _build_email_html(minutes_path)
+            email_html = _build_project_email_html(minutes_path)
             if email_html:
                 (email_dir / f"{slug}_email.html").write_text(email_html, encoding='utf-8')
         except Exception as e:
@@ -188,7 +188,7 @@ _EMAIL_TEMPLATE = """\
 </html>"""
 
 
-def _build_email_html(minutes_path: Path) -> str:
+def _build_project_email_html(minutes_path: Path) -> str:
     try:
         md_text = minutes_path.read_text(encoding='utf-8')
     except Exception:

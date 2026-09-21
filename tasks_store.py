@@ -117,7 +117,7 @@ def create_task(
 
 
 def update_task(task_id: str, fields: dict) -> bool:
-    allowed = {'title', 'description', 'status', 'assignee', 'deadline', 'priority', 'parent_id', 'project_id', 'bucket_id', 'start_date', 'end_date', 'tags'}
+    allowed = {'title', 'description', 'status', 'assignee', 'deadline', 'priority', 'parent_id', 'project_id', 'bucket_id', 'start_date', 'end_date', 'tags', 'view'}
     data = _load()
     for task in data['tasks']:
         if task['id'] == task_id:

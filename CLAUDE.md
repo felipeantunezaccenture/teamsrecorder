@@ -31,7 +31,7 @@ install_autostart.bat   # registers Task Scheduler entry
 # to run without console: start_silent.vbs
 ```
 
-**Diagnostic scripts** (not production, just dev helpers): `check_audio.py`, `check_teams.py`, `check_onenote.py`
+**Diagnostic scripts** (not production, just dev helpers): `tools/check_audio.py`, `tools/check_teams.py`, `tools/check_onenote.py`, `tools/check_onenote_graph.py`, `tools/diagnostico.py`. GSK one-offs: `tools/gsk/`.
 
 ## Configuration
 

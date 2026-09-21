@@ -89,7 +89,6 @@ class AudioRecorder:
 
         self.on_recording_stopped = None     # callable(wav_path)
         self.on_loopback_unavailable = None  # callable(reason) — grabando solo micrófono
-        self.on_chunk = None                 # callable(audio, offset_secs) — no usado en esta versión
 
     @property
     def is_recording(self) -> bool:
@@ -160,10 +159,6 @@ class AudioRecorder:
         self.loopback_active = False
         threading.Thread(target=self._start_loopback_async, daemon=True,
                          name='LoopbackInit').start()
-
-        if self.on_chunk:
-            t = threading.Thread(target=self._emit_chunks, daemon=True, name='ChunkEmitter')
-            t.start()
 
         log.info(f"Recording started → {output_path}")
 
@@ -683,33 +678,3 @@ class AudioRecorder:
             for block in cls._blocks(src_path, limit=frames):
                 out.write((block * gain).astype(np.float32))
 
-    # ── emisión de chunks parciales ──────────────────────────────────────────
-
-    def _emit_chunks(self):
-        import time
-        while self._recording:
-            time.sleep(60)
-            if self.on_chunk and self._recording:
-                self._emit_one_chunk()
-
-    def _emit_one_chunk(self):
-        path = self._tmp_mic
-        frames = self._frames(path)
-        start = self._chunk_mic_pos
-        if frames - start < SAMPLE_RATE * 10:
-            return
-        try:
-            with sf.SoundFile(str(path)) as f:
-                f.seek(start)
-                mic = f.read(frames - start, dtype='float32', always_2d=False)
-        except Exception as e:
-            log.warning(f"emit_one_chunk: {e}")
-            return
-        if not len(mic):
-            return
-        self._chunk_mic_pos = frames
-        peak = float(np.abs(mic).max())
-        if peak > 0:
-            mic = mic * (0.8 / peak)
-        if self.on_chunk:
-            self.on_chunk(mic, start / SAMPLE_RATE)

@@ -122,7 +122,8 @@ class TrayApp:
         threading.Thread(target=self._pipeline_loop, daemon=True, name='PipelineWorker').start()
         threading.Thread(target=self._recover_pending, daemon=True, name='PipelineRecovery').start()
         threading.Thread(target=self._notification_poller, daemon=True, name='NotificationPoller').start()
-        self._start_daily_brain_scan()
+        if (PROJECT_DIR / 'email_brain_updater.py').exists():
+            self._start_daily_brain_scan()
 
     def start(self):
         import pystray

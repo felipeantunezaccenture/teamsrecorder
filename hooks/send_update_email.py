@@ -16,7 +16,7 @@ from config import CLAUDE_BIN as _CLAUDE_BIN, clean_env
 # El email va a equipos que han clonado el repo en rutas distintas, asi que no
 # puede llevar un comando con la ruta fija: a quien no clono en Documents le
 # fallaba el pull. La skill /teamsrecorder localiza el clon y actualiza.
-_UPDATE_CMD = '/teamsrecorder'
+_UPDATE_CMD = '/update-teamsrecorder'
 _UPDATE_HTML = f"""<p>Para actualizar, abre Claude Code y ejecuta:</p>
 <pre style="background:#f4f4f4;padding:8px;border-radius:4px;font-family:monospace">{_UPDATE_CMD}</pre>
 <p>La app se reiniciará automáticamente.</p>"""
@@ -93,6 +93,8 @@ def _generate_html(commits_text: str) -> str:
                 timeout=90,
                 env=clean_env(),
             )
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr.strip() or f'claude exited {result.returncode}')
             body = result.stdout.strip()
             # Claude a veces envuelve el HTML en ```html ... ``` — quitarlo
             if body.startswith('```'):
