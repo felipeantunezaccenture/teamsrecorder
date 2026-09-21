@@ -30,6 +30,14 @@ inspect_gsk_structure.py
 insert_exec_summary.py
 PRESENTACION_LEADERS.md
 
+# ── Test ─────────────────────────────────────────────────────────────────────
+.pytest_cache/
+.pytest_tmp/
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc

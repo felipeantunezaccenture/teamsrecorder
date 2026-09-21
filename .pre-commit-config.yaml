@@ -1,0 +1,48 @@
+# Capa 2 de 3 de la obligacion de testear (ver tests/README.md).
+#
+# Frena a cualquiera que commitee en local, y viaja en el clone. Requiere un
+# paso manual una vez por maquina:
+#
+#   pip install -r requirements-dev.txt
+#   pre-commit install
+#
+# Limitacion honesta: se salta con `git commit --no-verify`. La unica capa que
+# nadie puede saltarse es GitHub Actions (.github/workflows/tests.yml).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      # ruff-check y no el alias 'ruff', que ya es legacy.
+      # SIN --fix a proposito: el codigo heredado tiene 104 avisos y un
+      # autofix silencioso reescribiria ficheros que el desarrollador no
+      # pensaba tocar, en un commit que trataba de otra cosa.
+      - id: ruff-check
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-json
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=512]
+
+  - repo: local
+    hooks:
+      - id: require-tests
+        name: codigo de la app sin tests
+        entry: python .claude/hooks/require_tests.py --staged
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: pytest-unit
+        name: pytest (solo unit, sin dispositivos)
+        # Envoltorio y no `python -m pytest` directo: sin el venv activado,
+        # `python` es el del sistema y el commit falla con un
+        # ModuleNotFoundError confuso en vez de con el resultado de los tests.
+        entry: python tests/_precommit_pytest.py
+        language: system
+        pass_filenames: false
+        always_run: true

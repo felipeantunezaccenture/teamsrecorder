@@ -1,0 +1,80 @@
+# Capa 3 de 3 de la obligacion de testear (ver tests/README.md).
+#
+# Es la UNICA capa que nadie puede saltarse: el hook de Claude Code solo ve lo
+# que hace Claude, y pre-commit se salta con --no-verify.
+#
+# PENDIENTE DE UNA ACCION DEL DUENO DEL REPO: para que esto BLOQUEE un merge y
+# no solo avise, hay que marcar el check "tests" como *required* en
+# Settings > Branches > Branch protection rules. Sin eso, CI informa y la PR
+# se puede mergear igual.
+name: tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  tests:
+    # windows-latest y no ubuntu: la app es Windows-only. pywin32, pycaw,
+    # comtypes y pyaudiowpatch no instalan en Linux, y teams_chat.py los
+    # importa a nivel de modulo.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # diff-cover necesita el historico para comparar con la rama base.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Instalar dependencias
+        # Se instala requirements.txt COMPLETO, no un subconjunto minimo.
+        # Un subconjunto es mas rapido pero se rompe en silencio en cuanto
+        # alguien anade un import, y esa clase de fallo invisible es
+        # justamente lo que esta suite existe para eliminar. De paso valida
+        # que requirements.txt instala de verdad, que es lo que ejecuta
+        # setup.bat en la maquina de cada companero.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint del codigo nuevo (bloquea)
+        # Se lintan en duro las carpetas escritas con el lint ya puesto. El
+        # codigo heredado tiene 104 avisos (45 de ellos el estilo compacto
+        # `BG = '#1e1e2e'; CARD = ...` de las paletas, a proposito) y un gate
+        # que falla el primer dia se acaba desactivando. Se limpia cuando se
+        # toque cada fichero, no en un cambio masivo sin tests que lo cubran.
+        run: ruff check tests .claude
+
+      - name: Lint del resto (informativo)
+        run: ruff check . --exit-zero --statistics
+
+      - name: Tests unitarios
+        # Los `integration` necesitan microfono real, Whisper o el CLI de
+        # claude: no pueden correr en un runner.
+        run: pytest -m "not integration" --cov --cov-report=xml --cov-report=term-missing
+
+      - name: Cobertura de las lineas cambiadas
+        # diff-cover en vez de "has tocado algun fichero de tests?": esa regla
+        # se engana con una linea en blanco. Exigir cobertura sobre las lineas
+        # NUEVAS, no.
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          diff-cover coverage.xml --compare-branch=origin/${{ github.base_ref }} --fail-under=80
+
+      - name: Guardar el informe de cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore

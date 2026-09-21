@@ -1,0 +1,87 @@
+# Configuracion de test y lint. La app no se empaqueta: este fichero existe
+# solo para pytest, coverage y ruff.
+
+[tool.pytest.ini_options]
+# El repo tiene layout plano sin __init__.py, asi que los tests necesitan la
+# raiz en sys.path para poder hacer `import tray_app`.
+pythonpath = ["."]
+testpaths = ["tests"]
+# --basetemp dentro del repo: en esta maquina corporativa pytest no tiene
+# permiso para limpiar el symlink pytest-current de %TEMP% y la sesion
+# termina con PermissionError [WinError 5] en el teardown.
+addopts = "-q --strict-markers --basetemp=.pytest_tmp"
+markers = [
+    "unit: sin dispositivos, sin red, sin subprocess, sin COM. Corre en CI",
+    "integration: necesita microfono real, el CLI de claude o Whisper. Solo en local",
+    "slow: depende de polls reales del detector (~30 s)",
+]
+# Un aviso de deprecacion que hoy se ignora es el bug de dentro de seis meses.
+filterwarnings = [
+    "error::DeprecationWarning",
+    # HALLAZGO (18/09/2026): sounddevice 0.5.2 hace `data.shape = -1, channels`
+    # en el callback de PortAudio, y numpy 2.5 lo deprecio. No rompe la
+    # grabacion hoy, pero cuando numpy lo elimine, el callback empezara a
+    # lanzar en cada bloque de audio y la grabacion dejara de capturar nada.
+    # Se ignora aqui porque es codigo de terceros dentro de un hilo de tiempo
+    # real: convertirlo en error mata el callback y ningun test de audio puede
+    # grabar. Hay que vigilar la version de sounddevice, no taparlo y olvidarlo.
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = [
+    ".venv/*",
+    "tests/*",
+    # Scripts de diagnostico manual, no forman parte de la app.
+    "check_*.py",
+    "diagnostico.py",
+    # GUI pura: un test aqui probaria tkinter, no la app.
+    "popup.py",
+    "tk_thread.py",
+    "actions_window.py",
+]
+
+[tool.coverage.report]
+# Por modulo, nunca en agregado: el agregado esconde que un modulo critico
+# este al 20% mientras otro trivial esta al 95%.
+skip_covered = false
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+exclude = [".venv", "web"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "C4"]
+ignore = [
+    # La app usa f-strings en logging a proposito, por legibilidad.
+    "G004",
+    # Lineas largas en los diccionarios de i18n y en los prompts.
+    "E501",
+    # E701/E702: el codigo define las paletas de color en una linea a
+    # proposito (`BG = '#1e1e2e'; CARD = '#313244'; FG = '#cdd6f4'`), y son
+    # 45 de los 102 avisos del codigo heredado. Activarlas convertiria
+    # cualquier commit sobre un fichero de GUI en una limpieza masiva, y un
+    # gate que bloquea un hotfix por estilo se acaba desactivando.
+    "E701",
+    "E702",
+]
+
+# DEUDA DE LINT CONOCIDA (18/09/2026): quedan 57 avisos en el codigo
+# heredado, con un maximo de 10 por fichero y 44 auto-arreglables. No se
+# arreglan de golpe: seria un cambio masivo sin tests que lo cubra. El hook de
+# pre-commit solo linta los ficheros que entran en el commit, asi que cada
+# fichero se limpia cuando se toca. audio_recorder.py y teams_detector.py ya
+# estan a cero.
+
+[tool.ruff.lint.per-file-ignores]
+# Los tests importan modulos despues de manipular sys.path.
+"tests/*" = ["E402"]
