@@ -235,6 +235,84 @@ def add_meeting_summary(project_id: str, stem: str, title: str, date: str, minut
         log.warning(f"add_meeting_summary: {e}")
 
 
+def meeting_project_id(minutes_path: Path) -> str:
+    """project_id registrado para la reunión, o '' si no tiene ninguno.
+
+    El _actions.json es la única fuente de verdad del proyecto de una reunión:
+    lo escribe la detección de actions_enricher y es lo que muestra la UI.
+    """
+    ap = minutes_path.parent / f"{minutes_path.stem}_actions.json"
+    if not ap.exists():
+        return ''
+    try:
+        pid = json.loads(ap.read_text(encoding='utf-8')).get('project_id', '')
+    except Exception as e:
+        log.warning(f"meeting_project_id {minutes_path.stem}: {e}")
+        return ''
+    return '' if not pid or pid == 'none' else pid
+
+
+def _title_and_date(minutes_path: Path, md_text: str) -> tuple[str, str]:
+    title = ''
+    if md_text.startswith('TITULO:'):
+        title = md_text.splitlines()[0].removeprefix('TITULO:').strip()
+    if not title:
+        m = re.match(r'\d{8}_\d{4}_(.+)', minutes_path.stem)
+        title = m.group(1).replace('_', ' ') if m else minutes_path.stem
+    date = ''
+    d = re.match(r'(\d{4})(\d{2})(\d{2})', minutes_path.stem)
+    if d:
+        date = f"{d.group(1)}-{d.group(2)}-{d.group(3)}"
+    return title, date
+
+
+def sync_meeting_summary(minutes_path: Path) -> str | None:
+    """Archiva el resumen de la reunión bajo el proyecto que dice su
+    _actions.json, y lo retira de cualquier otro.
+
+    Antes esta carpeta la elegía detect_project() por coincidencia de palabras
+    clave, que corre ANTES de generar las minutas y no tiene por qué coincidir
+    con la detección definitiva: una reunión acabó archivada en 'digital-brain'
+    mientras su project_id decía 'aramco-...', y el consumidor que filtra por
+    proyecto no la encontraba.
+
+    Es idempotente, así que sirve igual para el archivado normal, para una
+    reasignación manual y para rellenar reuniones anteriores a la creación del
+    proyecto.
+
+    Devuelve el project_id aplicado, o None si la reunión no tiene proyecto.
+    """
+    stem = minutes_path.stem
+    pid = meeting_project_id(minutes_path)
+
+    # Retirar copias en proyectos que ya no corresponden (reasignaciones).
+    root = PROJECT_DIR / 'project_docs'
+    if root.exists():
+        for pdir in root.iterdir():
+            if not pdir.is_dir() or pdir.name == pid:
+                continue
+            stale = pdir / 'meetings' / f"{stem}.txt"
+            if stale.exists():
+                try:
+                    stale.unlink()
+                    log.info(f"sync_meeting_summary: '{stem}' retirado de '{pdir.name}'")
+                except OSError as e:
+                    log.warning(f"sync_meeting_summary unlink: {e}")
+
+    if not pid:
+        return None
+
+    try:
+        md_text = minutes_path.read_text(encoding='utf-8')
+    except Exception as e:
+        log.warning(f"sync_meeting_summary read {stem}: {e}")
+        return None
+
+    title, date = _title_and_date(minutes_path, md_text)
+    add_meeting_summary(pid, stem, title, date, md_text)
+    return pid
+
+
 def get_context_dir(project: dict) -> str | None:
     pid = project.get('id') if project else None
     if not pid:

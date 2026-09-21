@@ -846,11 +846,40 @@ class AppAPI:
             log.warning(f"purge_trash_meeting: {e}")
             return False
 
+    def cancel_job(self, stem: str) -> bool:
+        """Descarta un trabajo del pipeline: en cola o ya transcribiendo.
+
+        El audio y lo que se haya generado van a la papelera, no se borran.
+        Se comunica por fichero porque el daemon corre en otro proceso (mismo
+        mecanismo que .cli_command).
+        """
+        if not stem:
+            return False
+        try:
+            from tray_app import _append_cancel_signal
+            _append_cancel_signal(stem)
+            log.info(f"cancel_job solicitado: {stem}")
+            return True
+        except Exception as e:
+            log.error(f"cancel_job: {e}")
+            return False
+
     def set_meeting_project(self, path: str, project_id: str) -> bool:
         """Manually assign (or override) the project for a meeting."""
         try:
             from actions_enricher import set_meeting_project_id
-            return set_meeting_project_id(Path(path), project_id)
+            ok = set_meeting_project_id(Path(path), project_id)
+            if ok:
+                # Reubicar también el resumen en project_docs/. Antes esto solo
+                # cambiaba el project_id del _actions.json y la carpeta se
+                # quedaba con la asignación anterior, o sin crear si la reunión
+                # es previa a la existencia del proyecto.
+                try:
+                    from project_context import sync_meeting_summary
+                    sync_meeting_summary(Path(path))
+                except Exception as e:
+                    log.warning(f"set_meeting_project sync: {e}")
+            return ok
         except Exception as e:
             log.error(f"set_meeting_project: {e}")
             return False

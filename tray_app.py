@@ -1,12 +1,47 @@
+import json
 import logging
 import queue
 import re
 import shutil
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from config import MINUTES_DIR, RECORDINGS_DIR, PROJECT_DIR, get_ui_language
+from transcriber import TranscriptionCancelled as _Cancelled
+
+# Trabajos descartados desde la ventana web, que corre en otro proceso.
+_CANCEL_FILE = PROJECT_DIR / '.cancelled_jobs.txt'
+
+
+def _read_cancel_signals() -> set[str]:
+    try:
+        if _CANCEL_FILE.exists():
+            return {ln.strip() for ln in _CANCEL_FILE.read_text(encoding='utf-8').splitlines()
+                    if ln.strip()}
+    except Exception:
+        pass
+    return set()
+
+
+def _append_cancel_signal(stem: str) -> None:
+    try:
+        _CANCEL_FILE.write_text('\n'.join(sorted(_read_cancel_signals() | {stem})),
+                                encoding='utf-8')
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"_append_cancel_signal: {e}")
+
+
+def _remove_cancel_signal(stem: str) -> None:
+    try:
+        rest = _read_cancel_signals() - {stem}
+        if rest:
+            _CANCEL_FILE.write_text('\n'.join(sorted(rest)), encoding='utf-8')
+        elif _CANCEL_FILE.exists():
+            _CANCEL_FILE.unlink()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"_remove_cancel_signal: {e}")
 
 _STR = {
     'es': dict(
@@ -22,6 +57,8 @@ _STR = {
         transcription_failed='No se pudo transcribir la grabación. Revisa el log para más detalles.',
         minutes_failed='No se pudieron generar las minutas. Revisa el log para más detalles.',
         mic_only='Grabando SOLO tu microfono: no se captura el audio de los demas. Si usas auriculares, sus voces no quedaran en la grabacion.',
+        cancel_job='Descartar esta reunion (papelera)',
+        job_cancelled='Reunion descartada: el audio y lo generado se han movido a la papelera.',
     ),
     'en': dict(
         record_now='Record now', stop='Stop recording',
@@ -36,6 +73,8 @@ _STR = {
         transcription_failed='Transcription failed. Check the log for details.',
         minutes_failed='Minutes generation failed. Check the log for details.',
         mic_only='Recording your microphone ONLY — system audio is not being captured. If you are on a headset, the others will not be in the recording.',
+        cancel_job='Discard this meeting (bin)',
+        job_cancelled='Meeting discarded: the audio and generated files were moved to the bin.',
     ),
 }
 
@@ -72,6 +111,14 @@ class TrayApp:
         self._session_lock = threading.RLock()
         self._MERGE_GRACE = 90
 
+        # Trabajos que el usuario ha descartado. Cubre el hueco entre parar la
+        # grabación y tener la minuta: ahí se gastan los minutos de Whisper, los
+        # tokens de Claude y el WAV en disco, y antes no había forma de abortar.
+        # Se respalda en un fichero porque quien cancela es la ventana web, que
+        # corre en otro proceso (mismo patrón que .cli_command).
+        self._cancelled: set[str] = set()
+        self._cancel_lock = threading.Lock()
+
         threading.Thread(target=self._pipeline_loop, daemon=True, name='PipelineWorker').start()
         threading.Thread(target=self._recover_pending, daemon=True, name='PipelineRecovery').start()
         threading.Thread(target=self._notification_poller, daemon=True, name='NotificationPoller').start()
@@ -89,9 +136,11 @@ class TrayApp:
                 pystray.MenuItem(s['add_context'],
                                  self._add_context,
                                  visible=lambda _: bool(self._recorder.is_recording)),
-                pystray.MenuItem(s['cancel_recording'],
+                pystray.MenuItem(lambda _: (s['cancel_recording'] if self._recorder.is_recording
+                                            else s['cancel_job']),
                                  self._cancel_recording,
-                                 visible=lambda _: bool(self._recorder.is_recording)),
+                                 visible=lambda _: bool(self._recorder.is_recording
+                                                        or self._active_job_stem())),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(s['view_minutes'], self._open_actions_ui, default=True),
                 pystray.Menu.SEPARATOR,
@@ -119,7 +168,7 @@ class TrayApp:
             job.update(self._current_job)
             jobs.append(job)
         for name in self._pipeline_queued:
-            jobs.append({'stage': 'queued', 'label': name, 'pct': 0})
+            jobs.append({'stage': 'queued', 'label': name, 'pct': 0, 'stem': name})
         try:
             (PROJECT_DIR / '.pipeline_status.json').write_text(_json.dumps({'jobs': jobs}), encoding='utf-8')
         except Exception:
@@ -216,6 +265,96 @@ class TrayApp:
         except Exception as e:
             log.error(f"Push notification error: {e}")
 
+    # ── cancelación de trabajos del pipeline ─────────────────────────────────
+
+    def cancel_job(self, stem: str) -> bool:
+        """Marca un trabajo para descartarlo: en cola o ya en proceso."""
+        if not stem:
+            return False
+        with self._cancel_lock:
+            self._cancelled.add(stem)
+        _append_cancel_signal(stem)
+        self._pipeline_queued = [n for n in self._pipeline_queued if n != stem]
+        self._write_status()
+        log.info(f"Trabajo marcado para descartar: {stem}")
+        return True
+
+    def _is_cancelled(self, stem: str) -> bool:
+        with self._cancel_lock:
+            if stem in self._cancelled:
+                return True
+        if stem in _read_cancel_signals():
+            with self._cancel_lock:
+                self._cancelled.add(stem)
+            return True
+        return False
+
+    def _forget_cancelled(self, stem: str) -> None:
+        with self._cancel_lock:
+            self._cancelled.discard(stem)
+        _remove_cancel_signal(stem)
+
+    def _discard_job(self, wav_path: Path, reason: str, minutes_path: Path | None = None) -> None:
+        """Manda a la papelera todo lo producido por un trabajo descartado.
+
+        Borrado suave, igual que delete_meeting: si el usuario se arrepiente, la
+        vista Papelera lo recupera. Se reutiliza el mismo formato de carpeta y
+        _trash_meta.json para que list_trash y recover_meeting no necesiten
+        saber que esto existe.
+        """
+        stem = wav_path.stem
+        trash_root = MINUTES_DIR.parent / 'trash'
+        trash_dir = trash_root / stem
+        n = 2
+        while trash_dir.exists():
+            trash_dir = trash_root / f"{stem}__{n}"
+            n += 1
+        try:
+            trash_dir.mkdir(parents=True, exist_ok=True)
+            candidates: list[Path] = []
+            for folder in (RECORDINGS_DIR, RECORDINGS_DIR / 'processed'):
+                if folder.exists():
+                    candidates.extend(folder.glob(f"{stem}.*"))
+                    candidates.extend(folder.glob(f"{stem}_transcript.*"))
+            if minutes_path:
+                candidates += [
+                    minutes_path,
+                    minutes_path.with_suffix('.html'),
+                    minutes_path.parent / f"{minutes_path.stem}_actions.json",
+                    minutes_path.parent / f"{minutes_path.stem}_transcript.txt",
+                ]
+
+            files_meta = []
+            for f in dict.fromkeys(candidates):        # sin duplicados, orden estable
+                if f.exists() and f.is_file():
+                    try:
+                        shutil.move(str(f), str(trash_dir / f.name))
+                        files_meta.append({'name': f.name, 'orig_dir': str(f.parent)})
+                    except Exception as e:
+                        log.warning(f"_discard_job move {f.name}: {e}")
+
+            m = re.match(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:_(.+))?', stem)
+            title = (m.group(6).replace('_', ' ').title() if (m and m.group(6)) else stem)
+            (trash_dir / '_trash_meta.json').write_text(json.dumps({
+                'stem':       stem,
+                'title':      title,
+                'date':       f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else '',
+                'time':       f"{m.group(4)}:{m.group(5)}" if m else '',
+                'deleted_at': datetime.now().isoformat(),
+                'cancelled':  True,
+                'reason':     reason,
+                'files':      files_meta,
+            }, ensure_ascii=False, indent=2), encoding='utf-8')
+            log.info(f"Trabajo descartado ({reason}): {stem} → papelera "
+                     f"({len(files_meta)} ficheros)")
+        except Exception as e:
+            log.warning(f"_discard_job: {e}")
+        finally:
+            self._forget_cancelled(stem)
+            self.set_processing('')
+            self._current_job = {}
+            self._write_status()
+
     def _on_recording_done(self, wav_path: Path):
         self._register_part_recorded(wav_path)
         self._pipeline_queued.append(wav_path.stem)
@@ -234,14 +373,22 @@ class TrayApp:
             try:
                 self._pipeline_queued = [n for n in self._pipeline_queued if n != wav_path.stem]
                 self._write_status()
+                if self._is_cancelled(wav_path.stem):
+                    self._discard_job(wav_path, 'descartada en cola')
+                    continue
                 self._run_pipeline_sync(wav_path)
+            except _Cancelled as c:
+                # Descartada a mitad del proceso. c.minutes_path apunta a las
+                # minutas si ya se habían escrito, para que también se vayan.
+                self._discard_job(wav_path, 'descartada durante el proceso',
+                                  getattr(c, 'minutes_path', None))
             except Exception as e:
                 log.error(f"Pipeline error: {e}", exc_info=True)
                 self.set_processing('')
 
     def _run_pipeline_sync(self, wav_path: Path):
         from storage import get_transcript_path, get_minutes_path
-        from transcriber import transcribe
+        from transcriber import partial_resume, transcribe
         from minutes_generator import generate_minutes, extract_title_from_minutes, save_minutes
         from html_exporter import export_to_html
         from actions_enricher import enrich_and_save
@@ -255,7 +402,11 @@ class TrayApp:
         _m = re.match(r'\d{4}-\d{2}-\d{2}_(\d{2})-(\d{2})(?:_(.+))?', wav_path.stem)
         _job_time  = f"{_m.group(1)}:{_m.group(2)}" if _m else ''
         _job_title = _m.group(3).replace('_', ' ').title() if (_m and _m.group(3)) else wav_path.stem
-        self._current_job = {'title': _job_title, 'time': _job_time, 'step': 1, 'total_steps': 3, 'step_label': 'Transcribiendo', 'step_started': time.time()}
+        # 'stem' viaja hasta .pipeline_status.json para que la ventana web sepa
+        # qué trabajo está cancelando.
+        self._current_job = {'stem': wav_path.stem, 'title': _job_title, 'time': _job_time,
+                             'step': 1, 'total_steps': 3, 'step_label': 'Transcribiendo',
+                             'step_started': time.time()}
 
         lang_path = transcript_path.with_suffix('.lang')
         if transcript_path.exists():
@@ -264,8 +415,16 @@ class TrayApp:
                 detected_language = lang_path.read_text().strip()
             log.info(f"Transcript ya existe, saltando: {transcript_path.name}")
         else:
+            # Si un intento anterior murió a medias (el 17/09 el proceso se fue
+            # con 0xC0000409 al 55% y el watchdog lo relanzó), se sigue desde su
+            # .partial en vez de volver a empezar. Las líneas ya transcritas se
+            # siembran aquí para que el .partial siga completo si vuelve a caer.
+            _resume_at, _kept = partial_resume(partial_path)
+            if _resume_at:
+                log.info(f"Reanudando transcripción de {wav_path.name} en "
+                         f"{_resume_at/60:.1f} min ({len(_kept)} líneas ya hechas)")
+            segments = list(_kept)
             self.set_processing('Transcribiendo 0%...')
-            segments = []
 
             def on_seg(line):
                 segments.append(line)
@@ -277,7 +436,9 @@ class TrayApp:
             def on_progress(pct):
                 self.set_processing(f'Transcribiendo {pct}%...')
 
-            result = transcribe(wav_path, on_progress=on_progress, on_segment=on_seg)
+            result = transcribe(wav_path, on_progress=on_progress, on_segment=on_seg,
+                                should_cancel=lambda: self._is_cancelled(wav_path.stem),
+                                resume_from=partial_path)
             if partial_path.exists():
                 partial_path.unlink()
 
@@ -479,6 +640,11 @@ class TrayApp:
         except Exception as e:
             log.warning(f"No se pudo preparar la memoria de proyecto: {e}")
 
+        # Última salida antes del paso caro: generar minutas es una llamada a
+        # Claude, y no tiene sentido pagarla si la reunión ya está descartada.
+        if self._is_cancelled(wav_path.stem):
+            raise _Cancelled()
+
         self._current_job.update({'step': 2, 'step_label': 'Generando minutas', 'step_started': time.time()})
         self.set_processing('Generando minutas...')
         raw = generate_minutes(transcript_text, wav_path, extra_context=extra_context,
@@ -493,14 +659,17 @@ class TrayApp:
         minutes_path = get_minutes_path(wav_path, title)
         save_minutes(content, minutes_path)
 
-        if _proj:
-            try:
-                from project_context import add_meeting_summary
-                _dm = re.match(r'(\d{4}-\d{2}-\d{2})', wav_path.stem)
-                add_meeting_summary(_proj.get('id', ''), minutes_path.stem, title,
-                                    _dm.group(1) if _dm else '', content)
-            except Exception as e:
-                log.warning(f"add_meeting_summary: {e}")
+        # Si se descartó mientras Claude generaba, las minutas ya están en disco:
+        # se adjuntan a la excepción para que se vayan a la papelera con el resto.
+        if self._is_cancelled(wav_path.stem):
+            exc = _Cancelled()
+            exc.minutes_path = minutes_path
+            raise exc
+
+        # El archivado en la carpeta del proyecto NO se hace aquí: _proj viene de
+        # detect_project() (palabras clave sobre el transcript) y solo sirve para
+        # elegir el contexto que se pasa al LLM. El proyecto definitivo lo decide
+        # enrich_and_save más abajo, y el archivado ocurre en su callback.
 
         try:
             transcript_copy = minutes_path.with_name(minutes_path.stem + '_transcript.txt')
@@ -549,6 +718,15 @@ class TrayApp:
             self._current_job = {}
             self.set_processing('')
             self._notify('TeamsRecorder', s['ready'])
+            # Aquí ya existe el _actions.json con el project_id definitivo, así
+            # que este es el único punto donde se decide la carpeta del proyecto.
+            try:
+                from project_context import sync_meeting_summary
+                _pid = sync_meeting_summary(minutes_path)
+                if _pid:
+                    log.info(f"Reunión archivada en el proyecto '{_pid}'")
+            except Exception as e:
+                log.warning(f"sync_meeting_summary on_done: {e}")
             try:
                 from project_exporter import export_to_project_folder
                 if export_to_project_folder(minutes_path, _transcript_for_export):
@@ -611,11 +789,26 @@ class TrayApp:
             self._recorder.start(path)
             self.set_recording(True, path)
 
+    def _active_job_stem(self) -> str:
+        """Trabajo que se puede descartar ahora: el que se procesa, o el primero
+        de la cola."""
+        stem = (self._current_job or {}).get('stem')
+        if stem:
+            return stem
+        return self._pipeline_queued[0] if self._pipeline_queued else ''
+
     def _cancel_recording(self):
-        if not self._recorder.is_recording:
+        # Mientras graba, se descarta el audio sin guardar. Una vez parada, lo
+        # que queda por descartar es el trabajo del pipeline.
+        if self._recorder.is_recording:
+            self._recorder.cancel()
+            self.set_recording(False)
             return
-        self._recorder.cancel()
-        self.set_recording(False)
+        stem = self._active_job_stem()
+        if stem:
+            self.cancel_job(stem)
+            s = _STR.get(get_ui_language(), _STR['en'])
+            self._notify('TeamsRecorder', s['job_cancelled'])
 
     def _add_context(self):
         rec_path = self._recording_path

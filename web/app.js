@@ -209,6 +209,9 @@ const T = {
     task_col_dates: 'Fechas', tags_placeholder: 'Añadir etiqueta…',
     task_filter_all: 'Todos',
     view_list: 'Vista lista', view_board: 'Vista tablero', refresh: 'Actualizar',
+    discard_job: 'Descartar esta reunión',
+    discard_job_confirm: '¿Descartar esta reunión? El audio y lo que se haya generado se moverán a la papelera, de donde puedes recuperarlos.',
+    discard_job_done: 'Reunión descartada — está en la papelera',
     status_not_started: 'Sin empezar', status_in_progress: 'En curso', status_done: 'Completado',
     status_blocked: 'Bloqueada', status_paused: 'En pausa', status_pending_feedback: 'Pend. feedback',
     task_col_description: 'Descripción', desc_placeholder: 'Añade una descripción...',
@@ -416,6 +419,9 @@ const T = {
     task_col_dates: 'Dates', tags_placeholder: 'Add tag…',
     task_filter_all: 'All',
     view_list: 'List view', view_board: 'Board view', refresh: 'Refresh',
+    discard_job: 'Discard this meeting',
+    discard_job_confirm: 'Discard this meeting? The audio and anything already generated will be moved to the bin, where you can still recover them.',
+    discard_job_done: 'Meeting discarded — it is in the bin',
     status_not_started: 'Not started', status_in_progress: 'In progress', status_done: 'Done',
     status_blocked: 'Blocked', status_paused: 'Paused', status_pending_feedback: 'Pending feedback',
     task_col_description: 'Description', desc_placeholder: 'Add a description...',
@@ -4210,6 +4216,17 @@ function initResize() {
 
 let _pipelinePanelOpen = false;
 
+async function cancelPipelineJob(stem) {
+  if (!stem) return;
+  if (!confirm(t('discard_job_confirm'))) return;
+  try {
+    await pywebview.api.cancel_job(stem);
+    showToast(t('discard_job_done'));
+  } catch (e) {
+    showToast('Error: ' + e);
+  }
+}
+
 let _hadPipelineJobs = false;
 
 async function updatePipelineFooter() {
@@ -4293,6 +4310,13 @@ async function updatePipelineFooter() {
       elapsedHtml = '';
     }
 
+    // Descartar: solo para trabajos ya en cola o en proceso. Una grabación en
+    // curso se para desde el menú de la bandeja, que tiene su propio flujo.
+    const cancelHtml = (j.stem && j.stage !== 'recording')
+      ? `<button class="pipeline-job-cancel" title="${escHtml(t('discard_job'))}"
+                 onclick="cancelPipelineJob(decodeURIComponent('${encodeURIComponent(j.stem)}'))">×</button>`
+      : '';
+
     return `
       <div class="pipeline-job-card ${dotClass}">
         <div class="pipeline-job-header">
@@ -4300,6 +4324,7 @@ async function updatePipelineFooter() {
           <span class="pipeline-job-label">${escHtml(titleText)}</span>
           ${timeText}
           ${elapsedHtml}
+          ${cancelHtml}
         </div>
         ${stepsHtml}
         ${progHtml}

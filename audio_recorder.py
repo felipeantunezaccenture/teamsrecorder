@@ -333,6 +333,7 @@ class AudioRecorder:
         voces de los demás quedarían adelantadas respecto a lo que dice quien
         graba.
         """
+        self._close_stale_loop_writer()
         self._loop_q = queue.Queue()
         self._loop_writer = threading.Thread(
             target=self._writer_loop, args=(self._loop_q, self._tmp_loop, 1, SAMPLE_RATE, 'loop'),
@@ -503,6 +504,27 @@ class AudioRecorder:
         self._loop_q = None
         self._mic_writer = None
         self._loop_writer = None
+
+    def _close_stale_loop_writer(self):
+        """Cierra el writer del loopback de un intento anterior, si quedó uno.
+
+        _start_stereo_mix_loopback abre el fichero antes de saber si el
+        InputStream funciona, así que un intento fallido deja un writer vivo.
+        Cuando el reintento abre el segundo writer sobre el mismo .part, el
+        primero se queda esperando para siempre en q.get() con el fichero
+        abierto, y en Windows un fichero con un handle vivo no se puede borrar:
+        quedan ~100 MB huérfanos por grabación. Pasó el 16/09 con la reunión de
+        las 16:40 (Stereo Mix falló, el reintento de WASAPI funcionó).
+        """
+        q, th = self._loop_q, self._loop_writer
+        if q is None and th is None:
+            return
+        self._loop_q = None
+        self._loop_writer = None
+        if q is not None:
+            q.put(None)
+        if th is not None:
+            th.join(timeout=5)
 
     def _discard_temp(self):
         for p in (self._tmp_mic, self._tmp_loop):
