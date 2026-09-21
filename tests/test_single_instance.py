@@ -5,11 +5,41 @@ escribiendo sobre el mismo fichero. El lock lo impide, y su fallo clasico es
 que la SEGUNDA instancia le robe el lock a la primera: aqui esta bien resuelto
 y estos tests lo dejan clavado.
 """
+import ctypes
+
 import pytest
 
 import main
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _mutex_libre(monkeypatch):
+    """Simula que el mutex de Windows esta libre antes de cada test.
+
+    Sin esto, la primera llamada a _check_single_instance() adquiere el mutex
+    para el lifetime del proceso y todos los tests siguientes lo ven como
+    ERROR_ALREADY_EXISTS aunque no haya ningun daemon real corriendo.
+    """
+    class _FakeKernel32:
+        def CreateMutexW(self, attr, owner, name):
+            return 999
+
+        def GetLastError(self):
+            return 0  # success: mutex adquirido limpio
+
+        def ReleaseMutex(self, h):
+            pass
+
+        def CloseHandle(self, h):
+            pass
+
+    monkeypatch.setattr(ctypes, 'windll',
+                        type('_windll', (), {'kernel32': _FakeKernel32()})())
+    main.__dict__.pop('_SINGLETON_MUTEX', None)
+    yield
+    main.__dict__.pop('_SINGLETON_MUTEX', None)
 
 
 @pytest.fixture
