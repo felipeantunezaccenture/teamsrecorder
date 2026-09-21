@@ -41,7 +41,7 @@ def test_el_codigo_de_la_app_exige_test(hook, ruta):
     'check_audio.py',                       # scripts de diagnostico manual
     'check_teams.py',
     'diagnostico.py',
-    '_merge_wavs.py',
+    'tools/_merge_wavs.py',
     'README.md',                            # documentacion
     'web/app.js',                           # no es Python
     'pyproject.toml',

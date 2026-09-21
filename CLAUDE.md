@@ -27,8 +27,8 @@ python cli.py minutes path/to/transcript.txt
 **Windows setup:**
 ```bash
 pip install -r requirements.txt
-install_autostart.bat   # registers Task Scheduler entry
-# to run without console: start_silent.vbs
+scripts\install_autostart.bat   # registers Task Scheduler entry
+# to run without console: scripts\start_silent.vbs
 ```
 
 **Diagnostic scripts** (not production, just dev helpers): `tools/check_audio.py`, `tools/check_teams.py`, `tools/check_onenote.py`, `tools/check_onenote_graph.py`, `tools/diagnostico.py`. GSK one-offs: `tools/gsk/`.

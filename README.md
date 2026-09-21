@@ -41,7 +41,7 @@ Esto descarga la app en tu carpeta `Documentos\TeamsRecorder`. Verás unas líne
 
 ### Paso 2 — Ejecutar el instalador
 
-Abre el Explorador de archivos (el icono de carpeta en la barra de tareas), navega a `Documentos\TeamsRecorder` y haz doble clic en **`instalar.bat`**.
+Abre el Explorador de archivos (el icono de carpeta en la barra de tareas), navega a `Documentos\TeamsRecorder\scripts` y haz doble clic en **`instalar.bat`**.
 
 Se abre una ventana negra que instala automáticamente Python, Node.js y Claude CLI si no los tienes. Cuando termine y veas que Claude está listo, escribe exactamente esto y pulsa Enter:
 
@@ -115,14 +115,16 @@ TeamsRecorder/
 ├── storage.py              # Rutas y almacenamiento
 ├── config.py               # Configuración global
 ├── watchdog.ps1            # Script de auto-reinicio
-├── start_watchdog.vbs      # Lanzador silencioso del watchdog
-├── install_autostart.bat   # Registra el arranque con Windows
+├── scripts/                # Instaladores y lanzadores
+│   ├── instalar.bat        # Instalador para usuarios finales
+│   ├── install_autostart.bat  # Registra el arranque con Windows
+│   └── start_watchdog.vbs  # Lanzador silencioso del watchdog
 └── requirements.txt
 ```
 
 ## Troubleshooting
 
-**El icono no aparece**: Busca en los iconos ocultos (^). Si no está, ejecuta `start_watchdog.vbs`.
+**El icono no aparece**: Busca en los iconos ocultos (^). Si no está, ejecuta `scripts\start_watchdog.vbs`.
 
 **El daemon no arranca / lock file**: Si ves errores de "already running", ejecuta en PowerShell:
 ```powershell

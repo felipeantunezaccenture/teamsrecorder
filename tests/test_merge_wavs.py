@@ -8,10 +8,14 @@ algo ha ido mal.
 Lo que importa cubrir: que respeta el orden, que normaliza el sample rate al
 que espera Whisper, y que no recorta el audio por saturacion.
 """
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 import soundfile as sf
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
 from _merge_wavs import merge_wavs
 
 pytestmark = pytest.mark.unit

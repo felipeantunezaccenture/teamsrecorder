@@ -118,7 +118,7 @@ Espera a que el usuario confirme que `claude login` ha ido bien antes de continu
 ### 4. Configurar el arranque automático con Windows
 
 ```powershell
-Start-Process -FilePath (Join-Path $TR "install_autostart.bat") -Wait -WorkingDirectory $TR
+Start-Process -FilePath (Join-Path $TR "scripts\install_autostart.bat") -Wait -WorkingDirectory $TR
 ```
 
 Esto crea un lanzador en la carpeta de Inicio de Windows (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`) que arranca el watchdog al iniciar sesión.
