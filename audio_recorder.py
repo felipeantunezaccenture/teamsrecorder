@@ -568,9 +568,26 @@ class AudioRecorder:
                 gain = (0.9 / mix_peak) if mix_peak > 1.0 else 1.0
                 self._write_mix(out_path, mic_path, loop_path, total, mic_gain, gain)
             else:
-                self._write_mix(out_path, mic_path, None, mic_frames, mic_gain, 1.0)
+                gain = 1.0
+                self._write_mix(out_path, mic_path, None, mic_frames, mic_gain, gain)
 
             log.info(f"WAV guardado: {out_path}")
+
+            # Save normalized speaker tracks so the transcriber can label who said what.
+            # Must happen before on_recording_stopped (which triggers transcription in a thread)
+            # and before _discard_temp() in the finally block.
+            try:
+                self._write_mono(
+                    out_path.with_suffix('.mic.wav'), mic_path, mic_frames, mic_gain * gain,
+                )
+                if use_loop:
+                    loop_norm = (0.8 / loop_peak) if loop_peak > 0 else 1.0
+                    self._write_mono(
+                        out_path.with_suffix('.loop.wav'), loop_path, loop_frames, loop_norm * gain,
+                    )
+                log.info("Speaker tracks guardados para diarización")
+            except Exception as e:
+                log.warning(f"Speaker tracks no guardados: {e}")
 
             if self.on_recording_stopped:
                 threading.Thread(
@@ -656,6 +673,15 @@ class AudioRecorder:
         ) as out:
             for mic_block, loop_block in cls._aligned_blocks(mic_path, loop_path, total):
                 out.write(((mic_block * mic_gain + loop_block) * gain).astype(np.float32))
+
+    @classmethod
+    def _write_mono(cls, out_path: Path, src_path: Path, frames: int, gain: float):
+        with sf.SoundFile(
+            str(out_path), mode='w', samplerate=SAMPLE_RATE,
+            channels=1, format='WAV', subtype='PCM_16',
+        ) as out:
+            for block in cls._blocks(src_path, limit=frames):
+                out.write((block * gain).astype(np.float32))
 
     # ── emisión de chunks parciales ──────────────────────────────────────────
 

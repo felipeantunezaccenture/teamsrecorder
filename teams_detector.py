@@ -74,10 +74,10 @@ def _check_window_titles(pids: list[int]) -> tuple[bool, bool, str | None, list[
                                 candidates.append(candidate)
                     return
 
-                # Teams 2.0: "<Meeting> | <Org> [| email] | Microsoft Teams"
-                # Requiere 2+ pipes. Propenso a falsos positivos con tabs de
-                # apps (Planner, Amethyst…) — el caller exige audio activo.
-                if raw.endswith('Microsoft Teams') and raw.count('|') >= 2:
+                # Teams 2.0: "<Meeting> | Microsoft Teams" (1 pipe, reuniones rápidas/personales)
+                # o "<Meeting> | <Org> [| email] | Microsoft Teams" (2+ pipes, reuniones formales).
+                # Propenso a falsos positivos con tabs de apps — el caller exige audio activo.
+                if raw.endswith('Microsoft Teams') and raw.count('|') >= 1:
                     parts = [p.strip() for p in raw.split('|')]
                     first = parts[0].strip()
                     if first.lower() not in _TEAMS_GENERIC_PAGES:
@@ -213,6 +213,8 @@ class TeamsCallDetector:
         self._name_change_candidate = None
         self._name_change_streak = 0
         self._current_meeting_name = None
+        self._idle_title_counts.clear()
+        self._stale_titles = set()
         log.info("Estado de llamada reseteado")
 
     def _loop(self):
@@ -271,7 +273,7 @@ class TeamsCallDetector:
                             # titulo como residual exige observarlo 20 polls, y la
                             # deteccion arranca en 2.
                             mic_active = _check_mic_session(pids) if teams2_match else False
-                            title_active = classic_match or (teams2_match and mic_active)
+                            title_active = classic_match or (teams2_match and (mic_active or audio_active))
 
                     # Para INICIAR: título O audio. Audio solo cubre llamadas 1:1 en
                     # Teams 2.0 donde el título siempre es genérico. Para evitar falsos
@@ -404,6 +406,11 @@ class TeamsCallDetector:
                         self._current_meeting_name = None
                         self._name_change_candidate = None
                         self._name_change_streak = 0
+                        # Reset stale-title tracking so the next call starts clean.
+                        # Without this, titles from meetings seen before this call
+                        # remain permanently blacklisted for the whole session.
+                        self._idle_title_counts.clear()
+                        self._stale_titles = set()
                         log.info(f"Llamada Teams finalizada ({'rapido' if fast_end else 'normal'})")
                         if self.on_call_ended:
                             threading.Thread(target=self.on_call_ended, daemon=True,

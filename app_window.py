@@ -1372,7 +1372,10 @@ class AppAPI:
                 ap = get_actions_path(md_path)
                 if ap.exists():
                     ap.unlink()
-                enrich_and_save(md_path, PROJECT_DIR.parent)
+                _enrich_done = threading.Event()
+                enrich_and_save(md_path, PROJECT_DIR.parent,
+                                on_done=lambda: _enrich_done.set())
+                _enrich_done.wait(timeout=300)  # wait for actions to be re-enriched
 
                 state['pct'] = 100
                 state['stage'] = 'done'

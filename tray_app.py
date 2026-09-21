@@ -122,6 +122,7 @@ class TrayApp:
         threading.Thread(target=self._pipeline_loop, daemon=True, name='PipelineWorker').start()
         threading.Thread(target=self._recover_pending, daemon=True, name='PipelineRecovery').start()
         threading.Thread(target=self._notification_poller, daemon=True, name='NotificationPoller').start()
+        self._start_daily_brain_scan()
 
     def start(self):
         import pystray
@@ -229,6 +230,33 @@ class TrayApp:
                     pass
             self._write_status()
             self._check_pending_notification()
+
+    def _start_daily_brain_scan(self):
+        """Background thread: runs email brain scan daily at ~08:00."""
+        import datetime as _dt
+
+        def _loop():
+            last_run_date = None
+            while True:
+                now = _dt.datetime.now()
+                today = _dt.date.today()
+                if now.hour == 8 and last_run_date != today:
+                    last_run_date = today
+                    try:
+                        from email_brain_updater import run_daily_scan
+                        from config import PROJECT_DIR
+                        import json
+                        projects_file = PROJECT_DIR / 'projects.json'
+                        if projects_file.exists():
+                            projects = json.loads(
+                                projects_file.read_text(encoding='utf-8')
+                            ).get('projects', [])
+                            run_daily_scan(projects)
+                    except Exception as e:
+                        log.warning(f"BrainDailyScan: {e}")
+                time.sleep(60)
+
+        threading.Thread(target=_loop, daemon=True, name='BrainDailyScan').start()
 
     def _notification_poller(self):
         while True:
@@ -741,6 +769,18 @@ class TrayApp:
 
         enrich_and_save(minutes_path, PROJECT_DIR.parent, on_done=on_done)
 
+        def _brain_update():
+            try:
+                from brain_synthesizer import update_brain_wiki
+                if _proj and _proj.get('id'):
+                    update_brain_wiki(_proj['id'], _proj.get('name', _proj['id']),
+                                      minutes_path, detected_language)
+                    log.info(f"Brain actualizado: {_proj['name']}")
+            except Exception as e:
+                log.warning(f"Brain synthesis no crítico: {e}")
+
+        threading.Thread(target=_brain_update, daemon=True, name='BrainDream').start()
+
     def _move_to_processed(self, wav_path: Path, transcript_path: Path):
         dest = RECORDINGS_DIR / 'processed'
         dest.mkdir(exist_ok=True)
@@ -788,6 +828,13 @@ class TrayApp:
             # on_recording_stopped se asigna una sola vez al inicio (en main.py)
             self._recorder.start(path)
             self.set_recording(True, path)
+            def _send_notice():
+                try:
+                    import teams_chat as _tc
+                    _tc.send_recording_notice()
+                except Exception as _e:
+                    log.warning(f"TeamsChatNotice: {_e}")
+            threading.Thread(target=_send_notice, daemon=True, name='TeamsChatNotice').start()
 
     def _active_job_stem(self) -> str:
         """Trabajo que se puede descartar ahora: el que se procesa, o el primero

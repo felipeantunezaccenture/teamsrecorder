@@ -150,7 +150,24 @@
 
 <!-- Menú contextual: reuniones -->
 <div id="meeting-ctx-menu" class="ctx-menu hidden">
-  <button class="ctx-menu-item ctx-menu-danger" id="ctx-delete-btn">🗑 <span data-i18n="ctx_delete_meeting">Eliminar</span></button>
+  <button class="ctx-menu-item" id="ctx-pin-btn"><span id="ctx-pin-label"></span></button>
+  <div class="ctx-menu-separator"></div>
+  <button class="ctx-menu-item ctx-menu-danger" id="ctx-delete-btn"><span data-i18n="ctx_delete_meeting">Delete</span></button>
+</div>
+
+<!-- Modal: renombrar reunión -->
+<div class="modal-overlay hidden" id="rename-modal">
+  <div class="modal-box">
+    <div class="modal-title">Editar nombre</div>
+    <div class="modal-field">
+      <label for="rename-modal-input">Nombre</label>
+      <input type="text" id="rename-modal-input">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeRenameModal()">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmRenameModal()">Guardar</button>
+    </div>
+  </div>
 </div>
 
 <!-- Modal: confirmar eliminación -->
@@ -303,6 +320,7 @@
     </div>
   </div>
 </div>
+
 
 <div class="view hidden" id="view-trash">
   <div class="settings-view">

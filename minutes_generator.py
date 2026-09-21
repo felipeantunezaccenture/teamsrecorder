@@ -133,7 +133,6 @@ _LANG_SECTIONS = {
         "Topics Discussed",
         "Decisions Made",
         "Pending Actions (first: table with ALL actions — columns: Action | Owner | Deadline; mark Claude-executable actions with '(Claude)' next to the owner. Then: one technical block per Claude-executable action, in the formats described above)",
-        "Open Questions & Risks (unresolved questions raised, decisions still pending, and any risks/blockers mentioned. Use a bullet list. If there are none, write 'None')",
         "Additional Notes",
     ],
     'es': [
@@ -142,7 +141,6 @@ _LANG_SECTIONS = {
         "Temas Tratados",
         "Decisiones Tomadas",
         "Acciones Pendientes (primero: tabla con TODAS las acciones — columnas: Acción | Responsable | Fecha límite; marca las ejecutables por Claude con '(Claude)' junto al responsable. Después: un bloque técnico por cada acción Claude, en los formatos descritos arriba)",
-        "Preguntas Abiertas y Riesgos (preguntas sin resolver que se plantearon, decisiones aún pendientes, y riesgos o bloqueos mencionados. Usa una lista con viñetas. Si no hay, escribe 'Ninguno')",
         "Notas Adicionales",
     ],
     'ca': [
@@ -151,7 +149,6 @@ _LANG_SECTIONS = {
         "Temes Tractats",
         "Decisions Preses",
         "Accions Pendents (primer: taula amb TOTES les accions — columnes: Acció | Responsable | Data límit; marca les executables per Claude amb '(Claude)' al costat del responsable. Després: un bloc tècnic per cada acció Claude, en els formats descrits anteriorment)",
-        "Preguntes Obertes i Riscos (preguntes sense resoldre que es van plantejar, decisions encara pendents, i riscos o bloquejos esmentats. Utilitza una llista amb vinyetes. Si no n'hi ha, escriu 'Cap')",
         "Notes Addicionals",
     ],
 }
@@ -162,7 +159,7 @@ def _get_system_prompt(language: str = 'auto') -> str:
     return _SYSTEM_PROMPT_BASE.format(language_instruction=instruction)
 
 
-def _build_prompt(transcript: str, recording_path: Path, extra_context: str | None = None, language: str = 'auto') -> str:
+def _build_prompt(transcript: str, recording_path: Path, extra_context: str | None = None, language: str = 'auto', me_name: str = '') -> str:
     m = re.match(r'(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})', recording_path.stem)
     fecha = m.group(1) if m else 'desconocida'
     hora = f"{m.group(2)}:{m.group(3)}" if m else 'desconocida'
@@ -201,9 +198,22 @@ def _build_prompt(transcript: str, recording_path: Path, extra_context: str | No
         "Después de la línea TITULO (y una línea en blanco), la PRIMERA línea del cuerpo de las minutas debe ser exactamente:"
     )
 
+    recorder_note = ''
+    if me_name:
+        if lang == 'en':
+            recorder_note = (
+                f"\nThe person who recorded this meeting is **{me_name}**. "
+                f"In the transcript, [{me_name}] refers to them. Use their real name throughout the minutes."
+            )
+        else:
+            recorder_note = (
+                f"\nLa persona que grabó esta reunión es **{me_name}**. "
+                f"En el transcript, [{me_name}] se refiere a ella. Usa su nombre real en toda la minuta."
+            )
+
     parts = [
         f"## Context / Contexto",
-        date_label,
+        date_label + recorder_note,
         "",
         "## Transcript" if lang == 'en' else "## Transcripción",
         transcript,
@@ -227,7 +237,13 @@ def _generate_via_cli(transcript: str, recording_path: Path, extra_context: str 
         log.error("claude CLI no encontrado en PATH")
         return None
 
-    user_prompt = _build_prompt(transcript, recording_path, extra_context, language)
+    try:
+        import json as _json
+        _cfg = _json.loads((PROJECT_DIR / 'settings.json').read_text(encoding='utf-8'))
+        me_name = _cfg.get('user_name', '').strip()
+    except Exception:
+        me_name = ''
+    user_prompt = _build_prompt(transcript, recording_path, extra_context, language, me_name=me_name)
     system_prompt = _get_system_prompt(language).replace('```', '~~~')
 
     cmd = [_CLAUDE_BIN, '-p']

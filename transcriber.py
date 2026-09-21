@@ -5,7 +5,7 @@ import re
 import threading
 from pathlib import Path
 
-from config import WHISPER_MODEL, WHISPER_LANGUAGE, OPENAI_API_KEY
+from config import WHISPER_MODEL, WHISPER_LANGUAGE, OPENAI_API_KEY, ME_NAME
 
 log = logging.getLogger(__name__)
 
@@ -17,6 +17,8 @@ _LANG_REMAP = {
     'gl': 'es', 'eu': 'es',
     'pt': 'es', 'it': 'es', 'fr': 'es', 'la': 'es',
     'cy': 'en', 'ga': 'en', 'gd': 'en',
+    # Malay/Indonesian are common Whisper false-positives when audio starts with silence
+    'ms': 'en', 'id': 'en',
 }
 
 # Modelos de mayor a menor. Si no hay memoria para el configurado se va bajando:
@@ -176,11 +178,12 @@ def _remap(detected: str | None) -> str:
 
 
 _TRANSCRIBE_ARGS = dict(
-    language=None,  # always auto-detect; forcing a language translates instead of transcribing
+    language=WHISPER_LANGUAGE or None,
     beam_size=1,
     condition_on_previous_text=False,
     vad_filter=True,
     vad_parameters=dict(min_silence_duration_ms=500, threshold=0.3),
+    language_detection_segments=5,
 )
 
 
@@ -255,6 +258,51 @@ def _transcribe_chunks(model, audio_path: Path, on_progress=None, on_segment=Non
     return '\n'.join(lines), (detected or 'es')
 
 
+def _transcribe_with_speakers(model, audio_path: Path) -> tuple[str, str]:
+    """Two-pass speaker-tagged transcription using .mic.wav / .loop.wav companion files.
+
+    Mic track  → segments labelled [Tú]
+    Loop track → segments labelled [Otros]
+    Both lists are merged by start timestamp so the final transcript reads
+    chronologically even though the two passes run sequentially.
+    """
+    mic_path = audio_path.with_suffix('.mic.wav')
+    loop_path = audio_path.with_suffix('.loop.wav')
+
+    log.info("Diarizando: transcribiendo track de micrófono...")
+    mic_segs_raw, mic_info = model.transcribe(str(mic_path), **_TRANSCRIBE_ARGS)
+    detected = _remap(getattr(mic_info, 'language', None))
+    log.info(f"Idioma detectado (diarización): {detected}")
+
+    me_label = f'[{ME_NAME}]' if ME_NAME else '[Speaker 1]'
+    others_label = '[Speaker 2]'
+    mic_segments: list[tuple[float, str, str]] = []
+    for seg in mic_segs_raw:
+        t = seg.text.strip()
+        if t:
+            mic_segments.append((seg.start, me_label, t))
+
+    log.info("Diarizando: transcribiendo track de Teams (otros)...")
+    loop_args = dict(_TRANSCRIBE_ARGS)
+    loop_args['language'] = detected
+    loop_args.pop('language_detection_segments', None)
+    loop_segs_raw, _ = model.transcribe(str(loop_path), **loop_args)
+    loop_segments: list[tuple[float, str, str]] = []
+    for seg in loop_segs_raw:
+        t = seg.text.strip()
+        if t:
+            loop_segments.append((seg.start, others_label, t))
+
+    all_segments = sorted(mic_segments + loop_segments, key=lambda x: x[0])
+    lines = [f"{_format_time(ts)} {speaker}: {text}" for ts, speaker, text in all_segments]
+
+    # Clean up speaker files — no longer needed once transcript is generated
+    mic_path.unlink(missing_ok=True)
+    loop_path.unlink(missing_ok=True)
+
+    return '\n'.join(lines), detected
+
+
 def _transcribe_local(audio_path: Path, on_progress=None, on_segment=None,
                       should_cancel=None, resume_from: Path | None = None) -> tuple[str, str]:
     """Recorre el plan de fallback hasta que uno funcione.
@@ -263,6 +311,10 @@ def _transcribe_local(audio_path: Path, on_progress=None, on_segment=None,
     OPENAI_API_KEY, la reunión se quedaba sin transcripción. Los fallos por
     memoria son recuperables: basta trocear el audio o usar un modelo menor.
     """
+    mic_path = audio_path.with_suffix('.mic.wav')
+    loop_path = audio_path.with_suffix('.loop.wav')
+    use_speakers = mic_path.exists() and loop_path.exists()
+
     plan = _fallback_plan(WHISPER_MODEL)
     resume_at, prior_lines = partial_resume(resume_from)
     if resume_at:
@@ -281,6 +333,12 @@ def _transcribe_local(audio_path: Path, on_progress=None, on_segment=None,
         try:
             _check_cancel(should_cancel)
             model = _get_model(name)
+            if use_speakers and not chunked:
+                return _transcribe_with_speakers(model, audio_path)
+            if use_speakers and chunked:
+                mic_path.unlink(missing_ok=True)
+                loop_path.unlink(missing_ok=True)
+                use_speakers = False
             if chunked:
                 return _transcribe_chunks(
                     model, audio_path, on_progress=on_progress, on_segment=on_segment,

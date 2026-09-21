@@ -1,4 +1,4 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+﻿*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
   --accent:     #A100FF;
@@ -598,10 +598,15 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
 }
 .project-settings-name { font-size: 14px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-settings-desc { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
+.proj-desc-textarea { font-size: 12px; resize: none; overflow: hidden; line-height: 1.5; min-height: 0; }
 .project-settings-item:not(.expanded) .project-settings-desc {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .project-chevron { flex-shrink: 0; font-size: 12px; color: var(--muted); transition: color 0.15s; }
+.proj-header-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; flex-shrink: 0; }
+.project-settings-row:hover .proj-header-actions { opacity: 1; }
+.proj-del-btn { color: var(--red) !important; }
+.proj-del-btn:hover { background: rgba(239,68,68,0.08) !important; }
 
 /* ── Papelera ── */
 .trash-item {
@@ -1235,6 +1240,8 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
   font-family: inherit; border-bottom: 1px solid transparent;
   padding: 2px 0; transition: border-color 0.15s;
   width: 100%; box-sizing: border-box; min-width: 0;
+  display: block; resize: none; overflow: hidden;
+  line-height: 1.4; white-space: pre-wrap; word-break: break-word;
 }
 .drawer-title-input:focus { border-bottom-color: var(--accent); }
 
@@ -1250,6 +1257,13 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
 .drawer-cell-input:focus { border-color: var(--accent); }
 
 .drawer-btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.drawer-claude-bar {
+  display: flex; gap: 8px; align-items: center;
+  padding-top: 12px; margin-top: 8px;
+  border-top: 2px solid var(--accent);
+}
+.drawer-dir-row { display: flex; gap: 6px; align-items: center; }
+.drawer-dir-row .drawer-cell-input { flex: 1; min-width: 0; }
 .drawer-save-row {
   display: flex; align-items: center; gap: 12px;
   padding-top: 8px; margin-top: 4px;
@@ -1357,9 +1371,10 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
   background: none; border: none; color: var(--text); cursor: pointer;
 }
 .ctx-menu-item:hover { background: var(--surface2); }
-.ctx-menu-item.ctx-menu-danger { color: #ef4444; }
-.ctx-menu-item.ctx-menu-danger:hover { background: #fee2e2; }
+.ctx-menu-item.ctx-menu-danger { color: var(--red); }
+.ctx-menu-item.ctx-menu-danger:hover { background: rgba(239,68,68,0.08); }
 [data-theme="dark"] .ctx-menu-item.ctx-menu-danger:hover { background: #4c1d1d; }
+.ctx-menu-separator { height: 1px; background: var(--border); margin: 3px 0; }
 
 
 .modal-overlay {
@@ -1376,6 +1391,16 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
 .modal-field { margin-bottom: 12px; }
 .modal-field label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 5px; }
 .modal-field select { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 13px; }
+.modal-field input[type="text"] {
+  width: 100%; padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); font-size: 13px;
+  font-family: inherit; outline: none; box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.modal-field input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(161,0,255,0.10);
+}
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
 .btn.icon-btn { display: inline-flex; align-items: center; gap: 5px; }
@@ -1798,3 +1823,198 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
   .main-panel { box-shadow: none; }
   a { color: inherit; text-decoration: none; }
 }
+
+/* Tabs */
+.brain-tabs {
+  display: flex; gap: 0; margin-bottom: -1px;
+}
+.brain-tab {
+  padding: 8px 18px; font-size: 13px; font-weight: 500; color: var(--subtext);
+  background: none; border: none; border-bottom: 2px solid transparent;
+  cursor: pointer; transition: color 0.15s, border-color 0.15s;
+}
+.brain-tab:hover { color: var(--text); }
+.brain-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* Chat pane (full height) */
+.brain-chat-pane {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+}
+.brain-chat-messages {
+  flex: 1; overflow-y: auto; padding: 24px 40px 16px;
+  display: flex; flex-direction: column; gap: 12px; min-height: 0;
+}
+/* Progress bar */
+.brain-progress-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 24px; background: var(--accent-tint);
+  border-bottom: 1px solid var(--accent-tint2); flex-shrink: 0; overflow: hidden;
+  position: relative;
+}
+.brain-progress-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--accent); opacity: 0.15; width: 0%; transition: width 1.8s ease;
+}
+.brain-progress-label {
+  font-size: 12px; font-weight: 500; color: var(--accent-dark);
+  position: relative; z-index: 1;
+}
+
+/* Chat messages */
+.brain-chat-msg { max-width: 72%; display: flex; flex-direction: column; }
+.brain-chat-msg-user { align-self: flex-end; }
+.brain-chat-msg-assistant { align-self: flex-start; max-width: 84%; }
+.brain-msg-content {
+  padding: 10px 14px; border-radius: 14px; font-size: 13px; line-height: 1.5;
+  word-break: break-word;
+}
+.brain-chat-msg-user .brain-msg-content {
+  background: var(--accent); color: #fff; border-radius: 14px 14px 2px 14px;
+  white-space: pre-wrap;
+}
+.brain-chat-msg-assistant .brain-msg-content {
+  background: var(--surface2); color: var(--text); border-radius: 14px 14px 14px 2px;
+}
+.brain-chat-msg-assistant .brain-msg-content p { margin: 2px 0; line-height: 1.55; }
+.brain-chat-msg-assistant .brain-msg-content br { display: block; content: ''; margin: 3px 0; }
+.brain-chat-msg-assistant .brain-msg-content ul { margin: 4px 0 4px 16px; padding: 0; }
+.brain-chat-msg-assistant .brain-msg-content li { margin: 2px 0; }
+.brain-chat-msg-assistant .brain-msg-content .chat-section { font-weight: 600; margin: 8px 0 2px; }
+.brain-chat-msg-assistant .brain-msg-content code { background: rgba(0,0,0,.08); border-radius: 3px; padding: 1px 4px; font-size: 12px; }
+.brain-chat-msg.thinking .brain-msg-content { opacity: 0.55; font-style: italic; }
+
+/* Suggestions */
+.brain-suggestions {
+  padding: 0 40px 20px; flex-shrink: 0;
+}
+.brain-suggestions-label {
+  font-size: 11px; font-weight: 600; color: var(--subtext);
+  text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 10px;
+}
+.brain-chips {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.brain-chip {
+  padding: 7px 14px; font-size: 13px; color: var(--text);
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--r-pill); cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  text-align: left;
+}
+.brain-chip:hover { background: var(--accent-tint); border-color: var(--accent-tint2); color: var(--accent-dark); }
+
+/* Input row */
+.brain-chat-input-row {
+  padding: 10px 40px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; align-items: flex-end; flex-shrink: 0;
+}
+.brain-chat-textarea {
+  flex: 1; border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 12px; font-size: 13px; font-family: inherit; resize: none;
+  background: var(--bg); color: var(--text); outline: none;
+  transition: border-color 0.15s;
+}
+.brain-chat-textarea:focus { border-color: var(--accent); }
+
+/* Wiki pane */
+.brain-wiki-pane {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+}
+.brain-wiki-scroll {
+  flex: 1; overflow-y: auto; min-height: 0;
+}
+.brain-wiki-content {
+  padding: 16px 40px 32px; font-size: 13px; line-height: 1.7; color: var(--text);
+}
+.brain-wiki-h1 { font-size: 18px; font-weight: 700; margin: 0 0 2px; color: var(--text); letter-spacing: -0.3px; }
+.brain-wiki-h2 { font-size: 13px; font-weight: 700; margin: 26px 0 8px; letter-spacing: -0.1px; border-bottom: 1px solid var(--border); padding-bottom: 6px; color: var(--text); }
+.brain-wiki-h3 { font-size: 13px; font-weight: 600; margin: 14px 0 4px; color: var(--text); }
+.brain-wiki-meta { font-size: 12px; color: var(--subtext); margin: 2px 0 10px; }
+.brain-wiki-p { margin: 3px 0; line-height: 1.65; }
+.brain-wiki-ul { margin: 4px 0 8px 20px; padding: 0; }
+.brain-wiki-ul li { margin: 3px 0; line-height: 1.55; font-size: 13px; }
+.brain-wiki-hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.brain-wiki-spacer { height: 6px; }
+.brain-wiki-content code { background: var(--surface2); border-radius: 3px; padding: 1px 5px; font-size: 12px; }
+.brain-wiki-table { border-collapse: collapse; width: 100%; margin: 12px 0 16px; font-size: 12px; }
+.brain-wiki-table th, .brain-wiki-table td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; vertical-align: top; }
+.brain-wiki-table th { background: var(--surface2); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--subtext); }
+.brain-wiki-table tr:nth-child(even) td { background: var(--surface); }
+.brain-wiki-h2[data-sec]::before {
+  content: attr(data-sec);
+  font-size: 9px; font-weight: 700;
+  padding: 1px 6px; border-radius: 3px;
+  background: var(--accent-tint); color: var(--accent-dark);
+  margin-right: 7px; vertical-align: 1px; display: inline-block;
+}
+
+[data-theme="dark"] .brain-chat-msg-user .brain-msg-content { background: var(--accent-dark); }
+[data-theme="dark"] .brain-chat-msg-assistant .brain-msg-content { background: #2a2a3e; }
+
+.brain-wiki-badge {
+  font-size: 9px; font-weight: 700; padding: 1px 6px;
+  border-radius: var(--r-pill); text-transform: uppercase; letter-spacing: 0.4px;
+  background: var(--accent-tint); color: var(--accent-dark);
+}
+.brain-wiki-badge-empty { background: var(--surface2); color: var(--subtext); }
+/* ── Snapshot status card (scrolls with wiki content) ── */
+.brain-snapshot-panel {
+  margin: 12px 40px 0;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); overflow: hidden;
+}
+.snap-grid { display: flex; flex-direction: column; }
+.snap-row {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.snap-row:last-child { border-bottom: none; }
+.snap-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--subtext); white-space: nowrap; min-width: 80px; flex-shrink: 0;
+}
+.snap-value { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); line-height: 1.5; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.snap-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.snap-dot-amber { background: var(--yellow); }
+.snap-dot-red   { background: var(--red); }
+.snap-dot-green { background: var(--green); }
+
+/* ── Wiki toolbar ── */
+.brain-wiki-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 40px; border-bottom: 1px solid var(--border);
+  background: var(--bg); flex-shrink: 0;
+}
+.brain-wiki-updated-ts { font-size: 11px; color: var(--subtext); font-variant-numeric: tabular-nums; }
+.brain-wiki-regen-btn {
+  font-size: 11px; padding: 4px 10px; border-radius: 5px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--subtext); cursor: pointer; transition: all 0.15s;
+}
+.brain-wiki-regen-btn:hover { background: var(--accent-tint); color: var(--accent-dark); border-color: var(--accent-tint2); }
+
+/* ── Note panel (inside wiki scroll area) ── */
+.brain-note-panel {
+  margin: 16px 40px 0;
+  border: 1px solid var(--accent-tint2); border-radius: var(--radius);
+  background: var(--accent-tint); padding: 12px 16px 14px;
+}
+.brain-note-input {
+  width: 100%; box-sizing: border-box;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; font-family: inherit; resize: vertical;
+  min-height: 58px; background: var(--bg); color: var(--text);
+}
+.brain-note-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.brain-note-cancel {
+  padding: 5px 12px; border: 1px solid var(--border); border-radius: 5px;
+  background: transparent; cursor: pointer; font-size: 13px; color: var(--text);
+}
+.brain-note-submit {
+  padding: 5px 14px; border: none; border-radius: 5px;
+  background: var(--accent); color: #fff; cursor: pointer; font-size: 13px;
+}
+.brain-note-submit:disabled { opacity: 0.5; cursor: not-allowed; }

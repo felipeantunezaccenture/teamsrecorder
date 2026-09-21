@@ -18,6 +18,7 @@ function sanitizeHtml(html) {
 
 // ── Estado global ────────────────────────────────────────────────────────────
 let currentPath          = null;
+let _regenPath           = null;   // non-null while confirmRegen is running
 let allMeetings          = [];
 let allPending           = [];
 let allProjects          = [];
@@ -125,6 +126,8 @@ const T = {
     btn_move_panel: 'Mover al panel', btn_in_panel: 'En panel',
     btn_go_notes: 'Ir a notas', btn_mark_complete: 'Marcar hecha',
     btn_delete: 'Eliminar', toast_deleted: 'Acción eliminada',
+    confirm_delete_action_title: 'Eliminar acción',
+    confirm_delete_action: title => `¿Eliminar la acción "${title}"? Esta acción no se puede deshacer.`,
     confirm_delete_title: 'Eliminar proyecto',
     confirm_delete_project: name => name
       ? `¿Seguro que quieres eliminar el proyecto "${name}"? Esta acción no se puede deshacer.`
@@ -263,6 +266,7 @@ const T = {
     add_action_deadline_ph: 'Fecha límite (opcional, YYYY-MM-DD)',
     add_action_save: 'Guardar',
     add_action_cancel: 'Cancelar',
+    delete_project_btn: 'Eliminar proyecto',
   },
   en: {
     nav_notes: 'Notes', nav_action_panel: 'Action Panel', nav_projects: 'Projects', nav_trash: 'Recently Deleted', settings_nav: 'Settings',
@@ -341,6 +345,8 @@ const T = {
     btn_move_panel: 'Move to panel', btn_in_panel: 'In panel',
     btn_go_notes: 'Go to notes', btn_mark_complete: 'Mark as complete',
     btn_delete: 'Delete', toast_deleted: 'Action deleted',
+    confirm_delete_action_title: 'Delete action',
+    confirm_delete_action: title => `Delete action "${title}"? This action cannot be undone.`,
     confirm_delete_title: 'Delete project',
     confirm_delete_project: name => name
       ? `Are you sure you want to delete the project "${name}"? This action cannot be undone.`
@@ -479,6 +485,7 @@ const T = {
     add_action_deadline_ph: 'Deadline (optional, YYYY-MM-DD)',
     add_action_save: 'Save',
     add_action_cancel: 'Cancel',
+    delete_project_btn: 'Delete project',
   },
   ca: {
     nav_notes: 'Notes', nav_action_panel: 'Panell d\'accions', nav_projects: 'Projectes', nav_trash: 'Eliminats recentment', settings_nav: 'Configuració',
@@ -557,6 +564,8 @@ const T = {
     btn_move_panel: 'Moure al panell', btn_in_panel: 'Al panell',
     btn_go_notes: 'Anar a notes', btn_mark_complete: 'Marcar com a feta',
     btn_delete: 'Eliminar', toast_deleted: 'Acció eliminada',
+    confirm_delete_action_title: 'Eliminar acció',
+    confirm_delete_action: title => `Eliminar l'acció "${title}"? Aquesta acció no es pot desfer.`,
     confirm_delete_title: 'Eliminar projecte',
     confirm_delete_project: name => name
       ? `Segur que vols eliminar el projecte "${name}"? Aquesta acció no es pot desfer.`
@@ -737,7 +746,8 @@ window.addEventListener('pywebviewready', async () => {
       const completions = await pywebview.api.get_terminal_completions();
       for (const c of completions) {
         showToast(`${c.title ? c.title.slice(0, 60) : 'Action'} — ${t('done_from_terminal')}`);
-        if (c.path && c.path === currentPath) openMeeting(currentPath);
+        // Skip panel rebuild if confirmRegen is running for this meeting
+        if (c.path && c.path === currentPath && _regenPath !== currentPath) openMeeting(currentPath);
       }
     } catch (_) {}
   }, 3000);
@@ -745,11 +755,17 @@ window.addEventListener('pywebviewready', async () => {
   // Pipeline status footer
   setInterval(updatePipelineFooter, 2000);
 
+  // Teclado: rename modal
+  document.getElementById('rename-modal-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); confirmRenameModal(); }
+    if (e.key === 'Escape') { e.preventDefault(); closeRenameModal(); }
+  });
+
   // Navegación externa (evita segunda ventana cuando hay notas nuevas)
   setInterval(async () => {
     try {
       const p = await pywebview.api.get_navigate_request();
-      if (p) {
+      if (p && _regenPath !== p) {
         // Red de seguridad: si la minuta no está en la lista, es nueva y hay
         // que traerla antes de abrirla, o se mostraría sin figurar en el panel.
         if (!allMeetings.some(m => _samePath(m.path, p))) {
@@ -833,22 +849,18 @@ function renderSidebar(meetings) {
 }
 
 function _meetingItemHtml(m) {
-  const path = meetingPaths[m.idx] || '';
   return `
     <div class="meeting-item${m.pinned ? ' pinned' : ''}" data-midx="${m.idx}">
       <div class="meeting-time">${m.time || ''}</div>
       <div class="meeting-info">
         <div class="meeting-title">${escHtml(m.title)}</div>
       </div>
-      <button class="btn-pin-meeting${m.pinned ? ' pinned' : ''}" data-pin-path="${escHtml(path)}" title="${m.pinned ? t('unpin') : t('pin')}">${_PIN_SVG}</button>
-      <button class="btn-delete-meeting" data-del-path="${escHtml(path)}" title="${t('btn_delete_meeting')}">×</button>
     </div>`;
 }
 
 function _wireSidebarItems(list) {
   list.querySelectorAll('.meeting-item').forEach(el => {
     el.addEventListener('click', e => {
-      if (e.target.closest('.btn-delete-meeting') || e.target.closest('.btn-pin-meeting')) return;
       const path = meetingPaths[parseInt(el.dataset.midx)];
       if (path) openMeeting(path);
     });
@@ -857,20 +869,6 @@ function _wireSidebarItems(list) {
       const path = meetingPaths[idx];
       const title = allMeetings[idx]?.title || '';
       if (path) _showMeetingContextMenu(e, path, title, el);
-    });
-  });
-  list.querySelectorAll('.btn-pin-meeting').forEach(btn => {
-    btn.addEventListener('click', async e => {
-      e.stopPropagation();
-      await pywebview.api.toggle_pin(btn.dataset.pinPath);
-      await refreshMeetingList();
-    });
-  });
-  list.querySelectorAll('.btn-delete-meeting').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const p = btn.dataset.delPath;
-      _confirmDeleteMeeting(p, (allMeetings.find(m => m.path === p) || {}).title || '', btn.closest('.meeting-item'));
     });
   });
 }
@@ -954,7 +952,6 @@ function renderSidebarByProject(meetings) {
               <div class="meeting-title">${escHtml(m.title)}</div>
               <div class="meeting-meta">${m.date || ''}</div>
             </div>
-            <button class="btn-delete-meeting" data-del-path="${escHtml(meetingPaths[m.idx] || '')}" title="${t('btn_delete_meeting')}">×</button>
           </div>
         `).join('')}
       </div>
@@ -963,7 +960,6 @@ function renderSidebarByProject(meetings) {
 
   list.querySelectorAll('.meeting-item').forEach(el => {
     el.addEventListener('click', e => {
-      if (e.target.closest('.btn-delete-meeting')) return;
       const path = meetingPaths[parseInt(el.dataset.midx)];
       if (path) openMeeting(path);
     });
@@ -972,13 +968,6 @@ function renderSidebarByProject(meetings) {
       const path = meetingPaths[idx];
       const title = allMeetings[idx]?.title || '';
       if (path) _showMeetingContextMenu(e, path, title, el);
-    });
-  });
-  list.querySelectorAll('.btn-delete-meeting').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const p = btn.dataset.delPath;
-      _confirmDeleteMeeting(p, (allMeetings.find(m => m.path === p) || {}).title || '', btn.closest('.meeting-item'));
     });
   });
 }
@@ -1050,9 +1039,16 @@ let _ctxEl    = null;
 function _initMeetingContextMenu() {
   const menu   = document.getElementById('meeting-ctx-menu');
   const delBtn = document.getElementById('ctx-delete-btn');
+  const pinBtn = document.getElementById('ctx-pin-btn');
   if (!menu) return;
 
   delBtn.onclick = () => { menu.classList.add('hidden'); _confirmDeleteMeeting(_ctxPath, _ctxTitle, _ctxEl); };
+  pinBtn.onclick = async () => {
+    menu.classList.add('hidden');
+    if (!_ctxPath) return;
+    await pywebview.api.toggle_pin(_ctxPath);
+    await refreshMeetingList();
+  };
 
   document.addEventListener('click', () => menu.classList.add('hidden'));
   document.addEventListener('contextmenu', e => {
@@ -1083,6 +1079,16 @@ document.addEventListener('keydown', (e) => {
 
   if (inInput) return; // don't intercept nav shortcuts while typing
 
+  // F5 / Ctrl+R → refresh meeting list + re-open active meeting
+  if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+    e.preventDefault();
+    (async () => {
+      await refreshMeetings();
+      if (currentPath) await openMeeting(currentPath);
+    })();
+    return;
+  }
+
   // Ctrl+1-5 → nav views
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
     const navMap = { '1': 'meetings', '2': 'actions', '3': 'projects', '4': 'trash', '5': 'settings' };
@@ -1097,10 +1103,13 @@ function _showMeetingContextMenu(e, path, title, el) {
   _ctxPath  = path;
   _ctxTitle = title;
   _ctxEl    = el;
+  const isPinned = el && el.classList.contains('pinned');
+  const pinLabel = document.getElementById('ctx-pin-label');
+  if (pinLabel) pinLabel.textContent = isPinned ? t('unpin') : t('pin');
   const menu = document.getElementById('meeting-ctx-menu');
   menu.classList.remove('hidden');
   const x = Math.min(e.clientX, window.innerWidth  - 175);
-  const y = Math.min(e.clientY, window.innerHeight - 75);
+  const y = Math.min(e.clientY, window.innerHeight - 90);
   menu.style.left = x + 'px';
   menu.style.top  = y + 'px';
 }
@@ -1360,11 +1369,11 @@ async function openMeeting(path) {
   document.getElementById('btn-rename-meeting')?.addEventListener('click', () => {
     const titleEl = document.getElementById('detail-title-text');
     const current = titleEl?.textContent || '';
-    const next = prompt(t('btn_edit') + ':', current);
-    if (!next || next.trim() === current.trim()) return;
-    pywebview.api.rename_meeting(path, next.trim()).then(ok => {
+    openRenameModal(current, async (next) => {
+      if (next === current.trim()) return;
+      const ok = await pywebview.api.rename_meeting(path, next);
       if (!ok) return;
-      if (titleEl) titleEl.textContent = next.trim();
+      if (titleEl) titleEl.textContent = next;
       const m = allMeetings.find(x => x.path === path);
       if (m) {
         m.title = next.trim();
@@ -1584,7 +1593,12 @@ function renderActionCards(actions, path, container, meetingDate) {
   `).join('');
 
   container.querySelectorAll('[data-del]').forEach(el => {
-    el.addEventListener('click', () => deleteAction(path, parseInt(el.dataset.del), el));
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.del);
+      const card = document.getElementById('card-' + idx);
+      const title = card?.querySelector('.action-title')?.textContent?.trim() || '';
+      deleteAction(path, idx, title);
+    });
   });
 
   container.querySelectorAll('[data-edit]').forEach(el => {
@@ -2809,7 +2823,7 @@ async function openTaskDetail(taskId) {
   body.innerHTML = `
     <div class="drawer-field">
       <div class="drawer-field-label">${t('task_col_name')}</div>
-      <input class="drawer-title-input" id="drawer-title" type="text" value="${escHtml(task.title)}">
+      <textarea class="drawer-title-input" id="drawer-title" rows="1">${escHtml(task.title)}</textarea>
     </div>
     <div class="drawer-fields-row">
       <div class="drawer-field">
@@ -2869,16 +2883,24 @@ async function openTaskDetail(taskId) {
       </button>
     </div>` : ''}
     ${isClaudeExec ? `
+    ${action.type === 'document_change' ? `
+    <div class="drawer-field">
+      <div class="drawer-field-label">${t('doc_file_label')}</div>
+      <div class="drawer-dir-row">
+        <input class="drawer-cell-input" id="drawer-doc-file" type="text"
+          value="${escHtml(action.archivo || '')}" placeholder="${t('doc_file_ph')}">
+        <button class="btn btn-ghost btn-sm" id="drawer-browse-file-btn">${t('doc_browse_file')}</button>
+      </div>
+    </div>` : ''}
     <div class="drawer-field" style="flex:1">
       <div class="drawer-prompt-label">${t('prompt_label')}</div>
       <textarea class="drawer-prompt-textarea" id="drawer-prompt">${escHtml(prompt)}</textarea>
     </div>
-    <div class="drawer-btn-row">
+    <div class="drawer-claude-bar">
       <button class="btn btn-primary btn-sm" id="drawer-launch-btn" onclick="_launchFromDrawer()">${t('btn_launch')}</button>
-      <button class="btn btn-ghost btn-sm" onclick="closeTaskDetail()">${t('regen_cancel')}</button>
     </div>` : ''}
     <div class="drawer-save-row">
-      <button class="btn btn-primary btn-sm" id="drawer-save-btn">${t('btn_save_task')}</button>
+      <button class="btn btn-ghost btn-sm" id="drawer-save-btn">${t('btn_save_task')}</button>
       <span class="drawer-last-edited" id="drawer-last-edited">
         ${task.last_edited ? `${t('last_edited_label')}: ${_fmtLastEdited(task.last_edited)}` : t('last_edited_never')}
       </span>
@@ -2916,8 +2938,17 @@ async function openTaskDetail(taskId) {
     }
   };
 
-  document.getElementById('drawer-title')?.addEventListener('blur', () =>
-    saveField('title', () => document.getElementById('drawer-title').value.trim()));
+  const _drawerTitle = document.getElementById('drawer-title');
+  if (_drawerTitle) {
+    _drawerTitle.style.height = 'auto';
+    _drawerTitle.style.height = _drawerTitle.scrollHeight + 'px';
+    _drawerTitle.addEventListener('input', () => {
+      _drawerTitle.style.height = 'auto';
+      _drawerTitle.style.height = _drawerTitle.scrollHeight + 'px';
+    });
+    _drawerTitle.addEventListener('blur', () =>
+      saveField('title', () => _drawerTitle.value.trim()));
+  }
   document.getElementById('drawer-status')?.addEventListener('change', () =>
     saveField('status', () => document.getElementById('drawer-status').value));
   document.getElementById('drawer-priority')?.addEventListener('change', () =>
@@ -2939,6 +2970,12 @@ async function openTaskDetail(taskId) {
     await saveField('description', () => document.getElementById('drawer-description')?.value.trim());
     if (btn) btn.disabled = false;
     if (_boardView) renderKanbanBoard();
+  });
+  document.getElementById('drawer-browse-file-btn')?.addEventListener('click', async () => {
+    const filePath = await pywebview.api.pick_file();
+    if (!filePath) return;
+    const input = document.getElementById('drawer-doc-file');
+    if (input) input.value = filePath;
   });
   document.getElementById('drawer-bucket')?.addEventListener('change', () => {
     const val = document.getElementById('drawer-bucket').value;
@@ -3004,7 +3041,13 @@ async function _launchFromDrawer() {
   if (!task?.meeting_path) return;
   const prompt = document.getElementById('drawer-prompt')?.value || '';
   await savePrompt(task.meeting_path, task.meeting_action_index, prompt);
-  const workingDir = await pywebview.api.get_action_working_dir(task.meeting_path, task.meeting_action_index);
+  const docFileInput = document.getElementById('drawer-doc-file');
+  let workingDir;
+  if (docFileInput && docFileInput.value.trim()) {
+    workingDir = docFileInput.value.trim();
+  } else {
+    workingDir = await pywebview.api.get_action_working_dir(task.meeting_path, task.meeting_action_index);
+  }
   closeTaskDetail();
   openRunsPanel();
   await globalLaunchRun(task.meeting_path, task.meeting_action_index, workingDir, prompt);
@@ -3181,8 +3224,16 @@ async function loadProjectsSettings(editingId = null) {
 
     const headerRow = isEditing ? `
       <div style="display:flex;flex-direction:column;gap:6px">
-        <input class="settings-text-input" id="edit-proj-name-${pid}" value="${escHtml(p.name)}" style="font-size:13px;font-weight:600">
-        <input class="settings-text-input" id="edit-proj-desc-${pid}" value="${escHtml(p.description || '')}" placeholder="${t('proj_desc_ph')}" style="font-size:12px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px">
+            <input class="settings-text-input" id="edit-proj-name-${pid}" value="${escHtml(p.name)}" style="font-size:13px;font-weight:600">
+            <textarea class="settings-text-input proj-desc-textarea" id="edit-proj-desc-${pid}" placeholder="${t('proj_desc_ph')}" rows="2" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'">${escHtml(p.description || '')}</textarea>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+            <button class="btn btn-primary btn-sm" onclick="saveEditProject('${pid}')">${t('save_btn')}</button>
+            <button class="btn btn-ghost btn-sm" onclick="loadProjectsSettings()">${t('cancel_btn')}</button>
+          </div>
+        </div>
       </div>
     ` : `
       <div class="project-settings-row" onclick="toggleProjectDetail('${pid}')">
@@ -3190,20 +3241,15 @@ async function loadProjectsSettings(editingId = null) {
           <div class="project-settings-name">${escHtml(p.name)}</div>
           ${p.description ? `<div class="project-settings-desc">${escHtml(p.description)}</div>` : ''}
         </div>
+        <div class="proj-header-actions">
+          <button class="proj-edit-btn btn btn-ghost btn-sm" onclick="event.stopPropagation();loadProjectsSettings('${pid}')">${t('edit_btn')}</button>
+          <button class="proj-del-btn btn btn-ghost btn-sm" onclick="event.stopPropagation();deleteProject('${pid}')">${t('delete_project_btn') || 'Delete'}</button>
+        </div>
         <span class="project-chevron">${isExpanded ? '▾' : '▸'}</span>
       </div>
     `;
 
-    const detailActions = isEditing ? `
-      <div style="display:flex;gap:4px;justify-content:flex-end;margin-bottom:8px">
-        <button class="btn btn-primary btn-sm" onclick="saveEditProject('${pid}')">${t('save_btn')}</button>
-        <button class="btn btn-ghost btn-sm" onclick="loadProjectsSettings()">${t('cancel_btn')}</button>
-      </div>
-    ` : `
-      <div style="display:flex;gap:4px;justify-content:flex-end;margin-bottom:4px">
-        <button class="btn btn-ghost btn-sm" onclick="loadProjectsSettings('${pid}')">${t('edit_btn')}</button>
-        <button class="btn btn-delete btn-sm" onclick="deleteProject('${pid}')">✕</button>
-      </div>`;
+    const detailActions = '';
 
     const fieldsDisabled = isEditing ? '' : 'disabled';
     const canEditExport = isEditing && hasFolder;
@@ -3213,7 +3259,6 @@ async function loadProjectsSettings(editingId = null) {
     <div class="project-settings-item${isExpanded ? ' expanded' : ''}" data-proj-id="${pid}" style="border-left-color:${color}">
       ${headerRow}
       <div class="project-settings-detail"${isExpanded ? '' : ' style="display:none"'}>
-        ${detailActions}
         ${isEditing ? `
         <div style="margin-top:4px;margin-bottom:4px">
           <div class="proj-field-label" style="margin-bottom:6px">${t('proj_color_label')}</div>
@@ -3275,6 +3320,7 @@ async function loadProjectsSettings(editingId = null) {
           </div>
           ${isEditing ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="browseContextDir('${pid}')">${t('proj_context_add')}</button>` : ''}
         </div>
+        ${detailActions}
       </div>
     </div>`;
   }).join('');
@@ -3362,6 +3408,31 @@ async function saveNewProject() {
   });
   hideAddProjectForm();
   await loadProjectsSettings();
+}
+
+// ── Modal renombrar reunión ───────────────────────────────────────────────────
+
+let _renameCallback = null;
+
+function openRenameModal(currentName, onConfirm) {
+  _renameCallback = onConfirm;
+  const input = document.getElementById('rename-modal-input');
+  if (input) { input.value = currentName; }
+  document.getElementById('rename-modal').classList.remove('hidden');
+  setTimeout(() => { input?.select(); }, 60);
+}
+
+function closeRenameModal() {
+  document.getElementById('rename-modal').classList.add('hidden');
+  _renameCallback = null;
+}
+
+async function confirmRenameModal() {
+  const input = document.getElementById('rename-modal-input');
+  const val = input?.value?.trim();
+  if (!val) return;
+  closeRenameModal();
+  if (_renameCallback) await _renameCallback(val);
 }
 
 // ── Modal de confirmación genérico ────────────────────────────────────────────
@@ -3628,11 +3699,17 @@ async function confirmMoveToPanel() {
   }
 }
 
-async function deleteAction(path, index, btn) {
-  await pywebview.api.delete_action(path, index);
-  const card = document.getElementById('card-' + index);
-  if (card) card.remove();
-  showToast(t('toast_deleted'));
+function deleteAction(path, index, title) {
+  openConfirmModal(
+    t('confirm_delete_action', title || ''),
+    async () => {
+      await pywebview.api.delete_action(path, index);
+      const card = document.getElementById('card-' + index);
+      if (card) card.remove();
+      showToast(t('toast_deleted'));
+    },
+    { title: t('confirm_delete_action_title'), okLabel: t('btn_delete') }
+  );
 }
 
 async function browseRunDir(index) {
@@ -4218,9 +4295,11 @@ async function confirmRegen(path) {
 
   const bar = document.getElementById('regen-bar');
   _showRegenProgress(bar);
+  _regenPath = path;
 
   const ok = await pywebview.api.regenerate_minutes(path, ctx);
   if (!ok) {
+    _regenPath = null;
     _restoreRegenBar(bar);
     showToast(t('toast_regen_error'));
     return;
@@ -4229,38 +4308,49 @@ async function confirmRegen(path) {
   // Polling: actualiza barra de progreso cada segundo hasta done (max 120s)
   for (let i = 0; i < 120; i++) {
     await new Promise(r => setTimeout(r, 1000));
-    try {
-      const s = await pywebview.api.get_regen_status(path);
-      const fill  = document.getElementById('regen-progress-fill');
-      const label = document.getElementById('regen-progress-label');
-      const pctEl = document.getElementById('regen-progress-pct');
-      if (fill)  fill.style.width  = (s.pct || 0) + '%';
-      if (pctEl) pctEl.textContent = (s.pct || 0) + '%';
-      if (label) label.textContent = s.error ? t('regen_stage_error') : _regenStageLabel(s.stage);
 
-      if (s.done) {
-        if (s.error) {
-          _restoreRegenBar(bar);
-          showToast(t('regen_stage_error') + ': ' + s.error);
+    // If the panel was rebuilt by something else, bar is detached — keep
+    // polling Python but skip UI updates until we call openMeeting at the end.
+    if (bar.isConnected) {
+      try {
+        const s = await pywebview.api.get_regen_status(path);
+        const fill  = document.getElementById('regen-progress-fill');
+        const label = document.getElementById('regen-progress-label');
+        const pctEl = document.getElementById('regen-progress-pct');
+        if (fill)  fill.style.width  = (s.pct || 0) + '%';
+        if (pctEl) pctEl.textContent = (s.pct || 0) + '%';
+        if (label) label.textContent = s.error ? t('regen_stage_error') : _regenStageLabel(s.stage);
+
+        if (s.done) {
+          if (s.error) {
+            _regenPath = null;
+            _restoreRegenBar(bar);
+            showToast(t('regen_stage_error') + ': ' + s.error);
+            return;
+          }
+          _regenPath = null;
+          showToast(t('toast_regen_done'));
+          await openMeeting(path);
           return;
         }
-        // Actualizar el contenido de las notas en pantalla
-        const html = await pywebview.api.get_minutes_html(path);
-        if (html) {
-          const sec = document.getElementById('section-notes');
-          if (sec) {
-            const mc = sec.querySelector('.minutes-content');
-            if (mc) mc.innerHTML = sanitizeHtml(html);
-          }
+      } catch (_) {}
+    } else {
+      // Bar detached — just poll status, no UI updates
+      try {
+        const s = await pywebview.api.get_regen_status(path);
+        if (s.done) {
+          _regenPath = null;
+          showToast(s.error ? t('regen_stage_error') + ': ' + s.error : t('toast_regen_done'));
+          if (!s.error) await openMeeting(path);
+          return;
         }
-        _restoreRegenBar(bar);
-        showToast(t('toast_regen_done'));
-        return;
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
   }
-  _restoreRegenBar(bar);
+  _regenPath = null;
+  if (bar.isConnected) _restoreRegenBar(bar);
   showToast(t('toast_regen_done'));
+  if (path === currentPath) await openMeeting(path);
 }
 
 // ── Resize sidebar ────────────────────────────────────────────────────────────
@@ -4830,3 +4920,4 @@ function _saveStickies() {
     try { pywebview.api.save_stickies(path, snap); } catch (_) {}
   }, 400);
 }
+

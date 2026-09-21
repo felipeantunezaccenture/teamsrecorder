@@ -10,8 +10,10 @@ $action = New-ScheduledTaskAction `
     -Argument "-NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$WatchdogPath`""
 
 # Trigger 1: al iniciar sesión interactiva
+# 60 s en lugar de 10 s: con 10 s, el subsistema de audio y el perfil de usuario
+# aun no estan listos y la tarea falla (LastTaskResult != 0) la mayoria de boots frios.
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$logonTrigger.Delay = "PT10S"
+$logonTrigger.Delay = "PT60S"
 
 # Trigger 2: al despertar de suspensión/hibernación
 # EventID 1 de Microsoft-Windows-Power-Troubleshooter indica que el sistema se wake
@@ -25,9 +27,9 @@ if ($wakeClass) {
         Delay        = 'PT20S'
     }
     $triggers += $wakeTrigger
-    $triggerDesc = "AtLogOn (10s) + wake-from-sleep (20s)"
+    $triggerDesc = "AtLogOn (60s) + wake-from-sleep (20s)"
 } else {
-    $triggerDesc = "AtLogOn (10s)  [wake trigger no disponible en este sistema]"
+    $triggerDesc = "AtLogOn (60s)  [wake trigger no disponible en este sistema]"
 }
 
 $settings = New-ScheduledTaskSettingsSet `

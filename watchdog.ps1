@@ -1,5 +1,51 @@
 # TeamsRecorder Watchdog — reinicia el daemon si se cae
-$dir    = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# ── Resolución robusta del directorio de instalación ─────────────────────────
+# $PSScriptRoot es la variable más fiable (PowerShell 3+, establecida por el
+# engine al cargar el archivo). Usamos varias fuentes en cascada para cubrir
+# escenarios donde Task Scheduler no establece $MyInvocation correctamente.
+$dir = $null
+foreach ($candidate in @(
+    $PSScriptRoot,
+    (Split-Path -Parent $PSCommandPath),
+    (Split-Path -Parent $MyInvocation.MyCommand.Path),
+    (Split-Path -Parent $MyInvocation.ScriptName)
+)) {
+    if (-not [string]::IsNullOrWhiteSpace($candidate) -and
+        (Test-Path (Join-Path $candidate 'tr_env.ps1'))) {
+        $dir = $candidate
+        break
+    }
+}
+
+# Último recurso: config guardada por tr_env.ps1 (Save-TRRoot)
+if (-not $dir) {
+    $savedCfg = Join-Path $env:LOCALAPPDATA 'TeamsRecorder\install_path.txt'
+    if (Test-Path $savedCfg) {
+        $saved = (Get-Content $savedCfg -Raw -ErrorAction SilentlyContinue).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($saved) -and
+            (Test-Path (Join-Path $saved 'tr_env.ps1'))) {
+            $dir = $saved
+        }
+    }
+}
+
+# Exploración de ubicaciones conocidas
+if (-not $dir) {
+    foreach ($cand in @(
+        (Join-Path $env:USERPROFILE 'Documents\TeamsRecorder'),
+        (Join-Path $env:USERPROFILE 'repos\teamsrecorder'),
+        (Join-Path $env:USERPROFILE 'source\repos\teamsrecorder'),
+        (Join-Path $env:USERPROFILE 'git\teamsrecorder'),
+        (Join-Path $env:USERPROFILE 'TeamsRecorder')
+    )) {
+        if (Test-Path (Join-Path $cand 'tr_env.ps1')) {
+            $dir = $cand
+            break
+        }
+    }
+}
+
 $mainpy = Join-Path $dir "main.py"
 $lockf  = Join-Path $dir ".lock"
 $logf   = Join-Path $dir "teamsrecorder.log"
@@ -10,7 +56,21 @@ function Log($msg) {
     Add-Content -Path $logf -Value "$ts WATCHDOG: $msg" -Encoding UTF8
 }
 
-Log "Watchdog iniciado (PID $PID)"
+if (-not $dir) {
+    # Sin $logf válido no podemos escribir en el log; escribir al menos al EventLog
+    try {
+        $src = 'TeamsRecorder'
+        if (-not [System.Diagnostics.EventLog]::SourceExists($src)) {
+            [System.Diagnostics.EventLog]::CreateEventSource($src, 'Application')
+        }
+        [System.Diagnostics.EventLog]::WriteEntry($src,
+            'Watchdog no pudo determinar el directorio de instalacion. Abortando.',
+            [System.Diagnostics.EventLogEntryType]::Error)
+    } catch {}
+    exit 1
+}
+
+Log "Watchdog iniciado (PID $PID) desde dir=$dir"
 
 try {
     . (Join-Path $dir "tr_env.ps1")
@@ -41,14 +101,41 @@ while ($true) {
             if (-not $alive) {
                 Remove-Item $lockf -Force -ErrorAction SilentlyContinue
                 Log "Lock huerfano eliminado (PID $pid_in_lock)"
+            } else {
+                Log "Lock valido — daemon PID $pid_in_lock ya corre. Watchdog en espera pasiva."
+                # No lanzar otro daemon; esperar a que el existente muera.
+                # WaitForExit() puede lanzar excepcion si el proceso no fue iniciado
+                # por este watchdog (no tenemos el handle). Fallback: polling cada 5s.
+                try {
+                    $alive.WaitForExit()
+                } catch {
+                    Log "WaitForExit fallo (sin handle); usando polling cada 5s: $_"
+                    while (Get-Process -Id $pid_in_lock -ErrorAction SilentlyContinue) {
+                        Start-Sleep -Seconds 5
+                    }
+                }
+                Log "Daemon PID $pid_in_lock termino (exit $($alive.ExitCode)). Reiniciando en 5s..."
+                Start-Sleep -Seconds 5
+                continue
             }
         }
     }
 
-    Log "Iniciando daemon..."
-    $proc = Start-Process -FilePath $python -ArgumentList "`"$mainpy`"" -PassThru -WorkingDirectory $dir
+    $startTime = Get-Date
+    Log "Iniciando daemon... (pythonw=$python)"
+    $proc = Start-Process -FilePath $python `
+        -ArgumentList "`"$mainpy`"" `
+        -PassThru `
+        -WorkingDirectory $dir
+    if (-not $proc) {
+        Log "ERROR: Start-Process no devolvio un objeto de proceso. Reintentando en 15s..."
+        Start-Sleep -Seconds 15
+        continue
+    }
+    Log "Daemon arrancado PID=$($proc.Id)"
     $proc.WaitForExit()
     $exitCode = $proc.ExitCode
-    Log "Daemon termino (exit $exitCode). Reiniciando en 5s..."
+    $elapsed  = [int]((Get-Date) - $startTime).TotalSeconds
+    Log "Daemon PID=$($proc.Id) termino tras ${elapsed}s (exit $exitCode). Reiniciando en 5s..."
     Start-Sleep -Seconds 5
 }

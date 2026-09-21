@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import sys
@@ -5,23 +6,74 @@ import time
 import threading
 from pathlib import Path
 
+# ── Bootstrap logger ──────────────────────────────────────────────────────────
+# Writes to %LOCALAPPDATA%\TeamsRecorder\startup.log using only stdlib and
+# absolute paths BEFORE any import that could fail.  With pythonw.exe every
+# unhandled pre-logging exception is completely silent; this file captures it.
+_BS_LOG = (
+    Path(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')))
+    / 'TeamsRecorder' / 'startup.log'
+)
+
+def _bs(msg: str):
+    try:
+        _BS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(_BS_LOG, 'a', encoding='utf-8') as f:
+            f.write(f"{ts}  {msg}\n")
+    except Exception:
+        pass
+
+_bs(f"=== START PID={os.getpid()} exe={sys.executable!r}")
+_bs(f"  CWD={os.getcwd()!r}  __file__={__file__!r}")
+_bs(f"  sys.path={sys.path!r}")
+# ─────────────────────────────────────────────────────────────────────────────
+
+_bs("importing config…")
 from config import PROJECT_DIR, LOG_FILE, CLI_CONTROL_FILE, TEAMS_POLL_INTERVAL
+_bs(f"config OK  PROJECT_DIR={PROJECT_DIR!r}  LOG_FILE={LOG_FILE!r}")
 
 # Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler(),
-    ]
-)
+try:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding='utf-8'),
+            logging.StreamHandler(),
+        ]
+    )
+    _bs("logging.basicConfig OK")
+except Exception as _e:
+    _bs(f"logging.basicConfig FAILED: {_e}")
+    raise
+
 log = logging.getLogger(__name__)
 
 LOCK_FILE = PROJECT_DIR / '.lock'
+# Named mutex for atomic single-instance guarantee (file lock alone has a TOCTOU race)
+_MUTEX_NAME = 'TeamsRecorder_SingleInstance'
 
 
 def _check_single_instance() -> bool:
+    # Step 1: Windows named mutex — atomic, survives process death automatically.
+    try:
+        import ctypes
+        _SA = ctypes.c_void_p  # simplification; no SECURITY_ATTRIBUTES
+        kernel32 = ctypes.windll.kernel32
+        _mutex = kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+        _err   = kernel32.GetLastError()
+        if _err == 183:  # ERROR_ALREADY_EXISTS
+            log.error("Mutex indica que ya hay una instancia corriendo — saliendo")
+            _bs("EXIT: mutex already exists")
+            return False
+        # Keep _mutex alive for the lifetime of the process by storing it globally
+        globals()['_SINGLETON_MUTEX'] = _mutex
+        _bs(f"mutex acquired (handle={_mutex})")
+    except Exception as _e:
+        _bs(f"mutex fallback — using file lock only: {_e}")
+
+    # Step 2: file lock (fallback + watchdog-visible PID)
     if LOCK_FILE.exists():
         try:
             pid = int(LOCK_FILE.read_text().strip())
@@ -30,10 +82,12 @@ def _check_single_instance() -> bool:
                 proc = psutil.Process(pid)
                 if 'python' in proc.name().lower():
                     log.error(f"Ya hay una instancia corriendo (PID {pid})")
+                    _bs(f"EXIT: lock file holds live PID {pid}")
                     return False
         except Exception:
             pass
     LOCK_FILE.write_text(str(os.getpid()))
+    _bs(f"lock file written PID={os.getpid()}")
     return True
 
 
@@ -62,23 +116,34 @@ def _start_cli_listener(recorder, tray, get_recording_path):
 
 
 def main():
+    _bs("main() entered")
     if not _check_single_instance():
         sys.exit(1)
 
     try:
+        _bs("importing storage…")
         from storage import ensure_directories, cleanup_old_recordings
+        _bs("importing AudioRecorder…")
         from audio_recorder import AudioRecorder
+        _bs("importing TeamsCallDetector…")
         from teams_detector import TeamsCallDetector
+        _bs("importing TrayApp…")
         from tray_app import TrayApp
+        _bs("importing InboxWatcher…")
         from inbox_watcher import InboxWatcher
         from storage import get_recording_path
+        _bs("all imports OK")
 
         ensure_directories()
         cleanup_old_recordings()
 
+        _bs("creating AudioRecorder…")
         recorder  = AudioRecorder()
+        _bs("creating TeamsCallDetector…")
         detector  = TeamsCallDetector()
+        _bs("creating TrayApp…")
         tray      = TrayApp(recorder, detector)
+        _bs("TrayApp created")
 
         recorder.on_loopback_unavailable = tray.warn_loopback_unavailable
 
@@ -177,16 +242,22 @@ def main():
 
         recorder.on_recording_stopped = tray._on_recording_done
 
+        _bs("starting detector…")
         detector.start()
+        _bs("starting InboxWatcher…")
         InboxWatcher(on_wav_ready=tray._on_recording_done).start()
         _start_cli_listener(recorder, tray, get_recording_path)
 
         log.info("TeamsRecorder iniciado")
+        _bs("calling tray.start() — main thread blocks here")
         tray.start()  # bloquea el hilo principal (requerido por pystray en Windows)
+        _bs("tray.start() returned — process will exit")
 
     except Exception as e:
+        _bs(f"EXCEPTION in main(): {type(e).__name__}: {e}")
         log.error(f"Error fatal: {e}", exc_info=True)
     finally:
+        _bs(f"finally block — cleaning up PID={os.getpid()}")
         try:
             LOCK_FILE.unlink()
         except Exception:

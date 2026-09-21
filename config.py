@@ -31,6 +31,8 @@ CHANNELS    = 1
 WHISPER_MODEL    = _settings.get('whisper_model') or os.getenv('WHISPER_MODEL', 'medium')
 WHISPER_LANGUAGE = os.getenv('WHISPER_LANGUAGE', '') or None
 
+ME_NAME = _settings.get('user_name', '').strip()
+
 CLAUDE_MODEL      = _settings.get('claude_model') or os.getenv('CLAUDE_MODEL', 'claude-sonnet-4-6')
 CLAUDE_MAX_TOKENS = 8192
 
