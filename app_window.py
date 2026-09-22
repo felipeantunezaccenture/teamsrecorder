@@ -309,14 +309,12 @@ class AppAPI:
 
 
     def download_pdf(self, md_path: str) -> dict:
-        """Convierte el HTML de las notas a PDF usando Edge headless y lo abre."""
+        """Genera PDF con Edge headless, pregunta dónde guardarlo y abre la carpeta."""
         import shutil, tempfile
         md   = Path(md_path)
         html = md.with_suffix('.html')
         if not html.exists():
             return {'ok': False, 'error': 'HTML no encontrado'}
-
-        pdf_path = md.with_suffix('.pdf')
 
         edge = next(
             (p for p in [
@@ -329,23 +327,47 @@ class AppAPI:
         if not edge:
             return {'ok': False, 'error': 'Microsoft Edge no encontrado'}
 
+        # Generar PDF en carpeta temporal
         try:
             with tempfile.TemporaryDirectory() as tmp:
+                tmp_pdf = Path(tmp) / 'output.pdf'
                 subprocess.run(
                     [edge, '--headless', '--disable-gpu',
-                     f'--print-to-pdf={pdf_path}',
+                     f'--print-to-pdf={tmp_pdf}',
                      '--no-pdf-header-footer',
                      f'--user-data-dir={tmp}',
                      html.as_uri()],
                     capture_output=True, timeout=30,
                 )
+                if not tmp_pdf.exists():
+                    return {'ok': False, 'error': 'Edge no generó el PDF'}
+
+                # Diálogo Save As via PowerShell (no bloquea el hilo de pywebview)
+                ps = (
+                    'Add-Type -AssemblyName System.Windows.Forms;'
+                    '$d = New-Object System.Windows.Forms.SaveFileDialog;'
+                    f'$d.FileName = "{md.stem}.pdf";'
+                    '$d.Filter = "PDF|*.pdf";'
+                    '$d.Title = "Guardar PDF";'
+                    '$d.InitialDirectory = [Environment]::GetFolderPath("Desktop");'
+                    'if ($d.ShowDialog() -eq "OK") { $d.FileName }'
+                )
+                r = subprocess.run(
+                    ['powershell', '-NoProfile', '-Command', ps],
+                    capture_output=True, text=True, timeout=120,
+                )
+                dest = r.stdout.strip()
+                if not dest:
+                    return {'ok': False, 'error': 'cancelado'}
+
+                shutil.copy2(tmp_pdf, dest)
+
         except Exception as e:
             return {'ok': False, 'error': str(e)}
 
-        if pdf_path.exists():
-            os.startfile(str(pdf_path))
-            return {'ok': True, 'path': str(pdf_path)}
-        return {'ok': False, 'error': 'Edge no generó el PDF'}
+        # Abrir la carpeta con el archivo seleccionado en el Explorador
+        subprocess.Popen(['explorer', '/select,', dest])
+        return {'ok': True, 'path': dest}
 
     def get_meetings(self) -> list:
 
