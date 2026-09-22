@@ -1295,7 +1295,12 @@ async function openMeeting(path) {
     </div>`;
 
   document.getElementById('btn-html').addEventListener('click', () => openHtml(path));
-  document.getElementById('btn-pdf').addEventListener('click', () => { document.getElementById('action-menu').classList.add('hidden'); window.print(); });
+  document.getElementById('btn-pdf').addEventListener('click', async () => {
+    document.getElementById('action-menu').classList.add('hidden');
+    if (!currentPath) return;
+    const r = await pywebview.api.download_pdf(currentPath);
+    if (!r.ok) alert('PDF: ' + r.error);
+  });
   document.getElementById('btn-export-transcript').addEventListener('click', () => exportTranscript(path));
   document.getElementById('btn-claude').addEventListener('click', () => openMinutesInClaude(path));
   document.getElementById('btn-regenerate').addEventListener('click', () => toggleRegenBar());

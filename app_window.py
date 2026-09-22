@@ -308,6 +308,45 @@ class AppAPI:
 
 
 
+    def download_pdf(self, md_path: str) -> dict:
+        """Convierte el HTML de las notas a PDF usando Edge headless y lo abre."""
+        import shutil, tempfile
+        md   = Path(md_path)
+        html = md.with_suffix('.html')
+        if not html.exists():
+            return {'ok': False, 'error': 'HTML no encontrado'}
+
+        pdf_path = md.with_suffix('.pdf')
+
+        edge = next(
+            (p for p in [
+                r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+                r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+                shutil.which('msedge') or '',
+            ] if p and Path(p).exists()),
+            None,
+        )
+        if not edge:
+            return {'ok': False, 'error': 'Microsoft Edge no encontrado'}
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                subprocess.run(
+                    [edge, '--headless', '--disable-gpu',
+                     f'--print-to-pdf={pdf_path}',
+                     '--no-pdf-header-footer',
+                     f'--user-data-dir={tmp}',
+                     html.as_uri()],
+                    capture_output=True, timeout=30,
+                )
+        except Exception as e:
+            return {'ok': False, 'error': str(e)}
+
+        if pdf_path.exists():
+            os.startfile(str(pdf_path))
+            return {'ok': True, 'path': str(pdf_path)}
+        return {'ok': False, 'error': 'Edge no generó el PDF'}
+
     def get_meetings(self) -> list:
 
         """Lista todas las minutas agrupadas por fecha, con conteo de pendientes."""
