@@ -1,4 +1,7 @@
 @echo off
+rem Trabajar desde la raiz del repo: este .bat vive en scripts/, pero
+rem requirements.txt y .env.example estan un nivel mas arriba.
+pushd "%~dp0.."
 echo Instalando dependencias de Noted...
 pip install -r requirements.txt
 if not exist .env (copy .env.example .env && echo Creado .env desde plantilla)
@@ -20,4 +23,5 @@ if errorlevel 1 (
 )
 echo.
 echo Setup completado.
+popd
 pause

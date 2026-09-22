@@ -1,7 +1,8 @@
 ﻿param([string]$WatchdogPath = "")
 
 if (-not $WatchdogPath) {
-    $WatchdogPath = Join-Path $PSScriptRoot "watchdog.ps1"
+    # La raiz del repo: este script vive en scripts/, watchdog.ps1 en la raiz.
+    $WatchdogPath = Join-Path (Split-Path $PSScriptRoot -Parent) "watchdog.ps1"
 }
 $WatchdogPath = (Resolve-Path $WatchdogPath).Path
 
