@@ -1,4 +1,4 @@
-# Tests de TeamsRecorder
+# Tests de Noted
 
 ## Por qué existe esta carpeta
 
@@ -79,7 +79,7 @@ Sin aislamiento estos tests no son una red de seguridad, **son un peligro**:
 2. `tasks_store.TASKS_FILE` y `buckets_store.BUCKETS_FILE` se resuelven en
    tiempo de import contra la raíz del repo: un test que llame `create_task()`
    sin redirigir **escribe en el tablero real**.
-3. `main.py` y `cli.py` adjuntan un `FileHandler` sobre `teamsrecorder.log` al
+3. `main.py` y `cli.py` adjuntan un `FileHandler` sobre `noted.log` al
    importarse. El `conftest` lo quita: la suite no debe ensuciar el log que se
    usa para diagnosticar crashes.
 

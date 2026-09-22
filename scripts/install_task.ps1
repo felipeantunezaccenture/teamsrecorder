@@ -1,4 +1,4 @@
-param([string]$WatchdogPath = "")
+﻿param([string]$WatchdogPath = "")
 
 if (-not $WatchdogPath) {
     $WatchdogPath = Join-Path $PSScriptRoot "watchdog.ps1"
@@ -42,13 +42,13 @@ $principal = New-ScheduledTaskPrincipal `
     -RunLevel Limited
 
 Register-ScheduledTask `
-    -TaskName "TeamsRecorder" `
+    -TaskName "Noted" `
     -Action $action `
     -Trigger $triggers `
     -Settings $settings `
     -Principal $principal `
     -Force | Out-Null
 
-Write-Host "Tarea 'TeamsRecorder' registrada para $env:USERDOMAIN\$env:USERNAME"
+Write-Host "Tarea 'Noted' registrada para $env:USERDOMAIN\$env:USERNAME"
 Write-Host "Triggers: $triggerDesc"
 Write-Host "Watchdog: $WatchdogPath"

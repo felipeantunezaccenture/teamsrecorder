@@ -129,9 +129,9 @@ class TrayApp:
         import pystray
         s = _STR.get(get_ui_language(), _STR['en'])
         self._icon = pystray.Icon(
-            'TeamsRecorder',
+            'Noted',
             _ICON_IDLE,
-            'TeamsRecorder',
+            'Noted',
             menu=pystray.Menu(
                 pystray.MenuItem(lambda _: s['stop'] if self._recorder.is_recording else s['record_now'],
                                  self._toggle_recording),
@@ -183,15 +183,15 @@ class TrayApp:
             self._ticker_stop.clear()
             t = threading.Thread(target=self._ticker, daemon=True, name='TrayTicker')
             t.start()
-            self._set_icon(_ICON_RECORDING, 'TeamsRecorder - Recording 00:00')
+            self._set_icon(_ICON_RECORDING, 'Noted - Recording 00:00')
         else:
             self._recording_path = None
             self._ticker_stop.set()
             self._recording_start = None
             if self._processing_msg:
-                self._set_icon(_ICON_PROCESSING, f'TeamsRecorder - {self._processing_msg}')
+                self._set_icon(_ICON_PROCESSING, f'Noted - {self._processing_msg}')
             else:
-                self._set_icon(_ICON_IDLE, 'TeamsRecorder')
+                self._set_icon(_ICON_IDLE, 'Noted')
         self._write_status()
         try:
             if self._icon:
@@ -204,9 +204,9 @@ class TrayApp:
         self._write_status()
         if not self._recording_start:
             if msg:
-                self._set_icon(_ICON_PROCESSING, f'TeamsRecorder - {msg}')
+                self._set_icon(_ICON_PROCESSING, f'Noted - {msg}')
             else:
-                self._set_icon(_ICON_IDLE, 'TeamsRecorder')
+                self._set_icon(_ICON_IDLE, 'Noted')
 
     def _set_icon(self, img, tooltip: str):
         try:
@@ -223,7 +223,7 @@ class TrayApp:
                 m, s = divmod(elapsed, 60)
                 rec_str = f'Recording {m:02d}:{s:02d}'
                 proc = self._processing_msg
-                tooltip = f'TeamsRecorder - {rec_str}' + (f' | {proc}' if proc else '')
+                tooltip = f'Noted - {rec_str}' + (f' | {proc}' if proc else '')
                 try:
                     if self._icon:
                         self._icon.title = tooltip
@@ -392,7 +392,7 @@ class TrayApp:
         n = self._pipeline_queue.qsize()
         if n > 1:
             s = _STR.get(get_ui_language(), _STR['en'])
-            self._notify('TeamsRecorder', s['recordings_queued'].format(n=n))
+            self._notify('Noted', s['recordings_queued'].format(n=n))
 
     def _pipeline_loop(self):
         while True:
@@ -473,7 +473,7 @@ class TrayApp:
 
             if not result:
                 log.error(f"Transcripción fallida para {wav_path.name}")
-                self._notify('TeamsRecorder ⚠', s['transcription_failed'])
+                self._notify('Noted ⚠', s['transcription_failed'])
                 self.set_processing('')
                 return
 
@@ -482,7 +482,7 @@ class TrayApp:
 
             if not transcript_text:
                 log.error(f"Transcripción fallida para {wav_path.name}")
-                self._notify('TeamsRecorder ⚠', s['transcription_failed'])
+                self._notify('Noted ⚠', s['transcription_failed'])
                 self.set_processing('')
                 return
 
@@ -680,7 +680,7 @@ class TrayApp:
                                language=detected_language, context_dir=_ctx_dir)
         if not raw:
             log.error("Generación de minutas fallida")
-            self._notify('TeamsRecorder ⚠', s['minutes_failed'])
+            self._notify('Noted ⚠', s['minutes_failed'])
             self.set_processing('')
             return
 
@@ -737,7 +737,7 @@ class TrayApp:
             log.warning(f"Error exportando HTML: {e}")
 
         s = _STR.get(get_ui_language(), _STR['en'])
-        self._notify('TeamsRecorder', s['action_items'])
+        self._notify('Noted', s['action_items'])
         self._current_job.update({'step': 3, 'step_label': 'Generando acciones', 'step_started': time.time()})
         self.set_processing(s['action_items'])
 
@@ -746,7 +746,7 @@ class TrayApp:
         def on_done():
             self._current_job = {}
             self.set_processing('')
-            self._notify('TeamsRecorder', s['ready'])
+            self._notify('Noted', s['ready'])
             # Aquí ya existe el _actions.json con el project_id definitivo, así
             # que este es el único punto donde se decide la carpeta del proyecto.
             try:
@@ -815,7 +815,7 @@ class TrayApp:
 
         if pending:
             s = _STR.get(get_ui_language(), _STR['en'])
-            self._notify('TeamsRecorder', s['recordings_pending'].format(n=len(pending)))
+            self._notify('Noted', s['recordings_pending'].format(n=len(pending)))
             for wav in pending:
                 self._pipeline_queue.put(wav)
 
@@ -856,7 +856,7 @@ class TrayApp:
         if stem:
             self.cancel_job(stem)
             s = _STR.get(get_ui_language(), _STR['en'])
-            self._notify('TeamsRecorder', s['job_cancelled'])
+            self._notify('Noted', s['job_cancelled'])
 
     def _add_context(self):
         rec_path = self._recording_path
@@ -932,7 +932,7 @@ class TrayApp:
         no cuando el usuario descubra el transcript incompleto días después."""
         log.error(f"Grabando sin audio del sistema: {reason}")
         s = _STR.get(get_ui_language(), _STR['en'])
-        self._notify('TeamsRecorder', s['mic_only'])
+        self._notify('Noted', s['mic_only'])
 
     def _notify(self, title: str, msg: str):
         try:

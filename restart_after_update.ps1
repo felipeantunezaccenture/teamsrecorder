@@ -1,4 +1,4 @@
-# TeamsRecorder — reinicio tras una actualizacion
+﻿# Noted — reinicio tras una actualizacion
 #
 # Lo invoca hooks/post-merge despues de cada git pull. Tambien es seguro
 # ejecutarlo a mano:
@@ -12,7 +12,7 @@ $root = $PSScriptRoot
 
 if (Test-TRRecording -Root $root) {
     Write-Host ''
-    Write-Host 'TeamsRecorder: hay una grabacion en curso.' -ForegroundColor Yellow
+    Write-Host 'Noted: hay una grabacion en curso.' -ForegroundColor Yellow
     Write-Host '   Los cambios ya se han descargado. Reinicia la app cuando termine la reunion.' -ForegroundColor Yellow
     Write-Host ''
     Show-TRNotification -Text 'Hay una grabacion en curso. Reinicia la app cuando termine la reunion.'
@@ -25,15 +25,15 @@ Stop-TRWatchdog -Root $root | Out-Null
 Stop-TRDaemon   -Root $root | Out-Null
 
 if (-not (Update-TRDependencies -Root $root)) {
-    Write-Host 'TeamsRecorder: no se pudieron actualizar las dependencias.' -ForegroundColor Yellow
+    Write-Host 'Noted: no se pudieron actualizar las dependencias.' -ForegroundColor Yellow
     Write-Host '   Revisa que exista el entorno virtual (.venv) o que python este en el PATH.' -ForegroundColor Yellow
 }
 
 if (Start-TRDaemon -Root $root) {
-    Write-Host 'TeamsRecorder reiniciado con los ultimos cambios.' -ForegroundColor Green
+    Write-Host 'Noted reiniciado con los ultimos cambios.' -ForegroundColor Green
     exit 0
 }
 
-Write-Host 'TeamsRecorder: el daemon no ha arrancado.' -ForegroundColor Red
-Write-Host "   Revisa $root\teamsrecorder.log" -ForegroundColor Red
+Write-Host 'Noted: el daemon no ha arrancado.' -ForegroundColor Red
+Write-Host "   Revisa $root\noted.log" -ForegroundColor Red
 exit 1

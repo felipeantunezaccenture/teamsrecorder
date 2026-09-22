@@ -194,7 +194,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     {body}
   </div>
   <div class="footer">
-    <span>Generado automáticamente con TeamsRecorder + Claude</span>
+    <span>Generado automáticamente con Noted + Claude</span>
     <span>{generated_at}</span>
   </div>
 </div>

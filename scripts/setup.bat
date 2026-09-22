@@ -1,5 +1,5 @@
 @echo off
-echo Instalando dependencias de TeamsRecorder...
+echo Instalando dependencias de Noted...
 pip install -r requirements.txt
 if not exist .env (copy .env.example .env && echo Creado .env desde plantilla)
 echo.

@@ -69,7 +69,7 @@ TEAMS_REQUIRED_CONFIRMATIONS = 2
 POPUP_TIMEOUT = 30
 
 CLI_CONTROL_FILE = PROJECT_DIR / '.cli_command'
-LOG_FILE         = PROJECT_DIR / 'teamsrecorder.log'
+LOG_FILE         = PROJECT_DIR / 'noted.log'
 
 
 def get_ui_language() -> str:

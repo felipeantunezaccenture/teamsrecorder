@@ -156,7 +156,7 @@ const T = {
     es_label: 'Español', en_label: 'English', ca_label: 'Català',
     refresh_meetings: 'Actualizar reuniones',
     name_desc: 'Se usa para identificar tus acciones asignadas',
-    projects_desc: 'TeamsRecorder detecta automáticamente a qué proyecto pertenece cada reunión y permite filtrar acciones por proyecto',
+    projects_desc: 'Noted detecta automáticamente a qué proyecto pertenece cada reunión y permite filtrar acciones por proyecto',
     add_project: '+ Añadir proyecto',
     proj_name_ph: 'Nombre del proyecto', proj_desc_ph: 'Descripción corta', proj_stake_ph: 'emails separados por coma',
     save_btn: 'Guardar',
@@ -171,8 +171,8 @@ const T = {
     proj_stake_label: 'Stakeholder Emails',
     proj_stake_desc: 'Estos contactos se añadirán automáticamente como destinatarios cuando envíes las minutas de una reunión de este proyecto por email. Separa varios emails con comas.',
     proj_dir_label: 'Carpeta del proyecto',
-    proj_dir_desc: 'Por defecto, TeamsRecorder guarda todo en su propia carpeta. Si seleccionas aquí la carpeta raíz de tu proyecto, las acciones de Claude se ejecutarán desde ahí.',
-    proj_folder_default: 'Carpeta de TeamsRecorder (por defecto)',
+    proj_dir_desc: 'Por defecto, Noted guarda todo en su propia carpeta. Si seleccionas aquí la carpeta raíz de tu proyecto, las acciones de Claude se ejecutarán desde ahí.',
+    proj_folder_default: 'Carpeta de Noted (por defecto)',
     proj_folder_browse: 'Seleccionar carpeta',
     proj_folder_clear: 'Restablecer',
     proj_context_label: 'Memoria del proyecto',
@@ -375,7 +375,7 @@ const T = {
     es_label: 'Español', en_label: 'English', ca_label: 'Català',
     refresh_meetings: 'Refresh meetings',
     name_desc: 'Used to identify actions assigned to you',
-    projects_desc: 'TeamsRecorder automatically detects which project each meeting belongs to and lets you filter actions by project',
+    projects_desc: 'Noted automatically detects which project each meeting belongs to and lets you filter actions by project',
     add_project: '+ Add project',
     proj_name_ph: 'Project name', proj_desc_ph: 'Short description', proj_stake_ph: 'comma-separated emails',
     save_btn: 'Save',
@@ -390,8 +390,8 @@ const T = {
     proj_stake_label: 'Stakeholder Emails',
     proj_stake_desc: 'These contacts will be automatically added as recipients when you send meeting minutes for this project by email. Separate multiple emails with commas.',
     proj_dir_label: 'Project folder',
-    proj_dir_desc: 'By default, TeamsRecorder saves everything in its own folder. Select your project\'s root folder here so Claude actions run from the right working directory.',
-    proj_folder_default: 'TeamsRecorder folder (default)',
+    proj_dir_desc: 'By default, Noted saves everything in its own folder. Select your project\'s root folder here so Claude actions run from the right working directory.',
+    proj_folder_default: 'Noted folder (default)',
     proj_folder_browse: 'Browse folder',
     proj_folder_clear: 'Reset',
     proj_context_label: 'Project memory',
@@ -593,7 +593,7 @@ const T = {
     es_label: 'Español', en_label: 'English', ca_label: 'Català',
     refresh_meetings: 'Actualitzar reunions',
     name_desc: 'S\'utilitza per identificar les teves accions assignades',
-    projects_desc: 'TeamsRecorder detecta automàticament a quin projecte pertany cada reunió i permet filtrar accions per projecte',
+    projects_desc: 'Noted detecta automàticament a quin projecte pertany cada reunió i permet filtrar accions per projecte',
     add_project: '+ Afegir projecte',
     proj_name_ph: 'Nom del projecte', proj_desc_ph: 'Descripció curta', proj_stake_ph: 'correus separats per comes',
     save_btn: 'Desar',
@@ -608,8 +608,8 @@ const T = {
     proj_stake_label: 'Stakeholder Emails',
     proj_stake_desc: 'Aquests contactes s\'afegiran automàticament com a destinataris quan enviïs les actes d\'una reunió d\'aquest projecte per correu. Separa diversos correus amb comes.',
     proj_dir_label: 'Carpeta del projecte',
-    proj_dir_desc: 'Per defecte, TeamsRecorder desa-ho tot a la seva pròpia carpeta. Si selecciones aquí la carpeta arrel del teu projecte, les accions de Claude s\'executaran des d\'allà.',
-    proj_folder_default: 'Carpeta de TeamsRecorder (per defecte)',
+    proj_dir_desc: 'Per defecte, Noted desa-ho tot a la seva pròpia carpeta. Si selecciones aquí la carpeta arrel del teu projecte, les accions de Claude s\'executaran des d\'allà.',
+    proj_folder_default: 'Carpeta de Noted (per defecte)',
     proj_folder_browse: 'Seleccionar carpeta',
     proj_folder_clear: 'Restablir',
     proj_context_label: 'Memòria del projecte',
@@ -1187,7 +1187,7 @@ function _updateActionBar(tab) {
   show('btn-sticky-bar', tab === 'actions');    // direct bar button
 
   // Dropdown items (notes only)
-  show('btn-regenerate', tab === 'notes');
+  show('btn-regenerate', tab !== 'transcript');
   show('btn-html',       tab === 'notes');
   show('btn-pdf',        tab === 'notes');
 
@@ -1249,11 +1249,11 @@ async function openMeeting(path) {
           <button class="action-icon-btn" id="btn-email" title="${t('send_email')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></button>
           <button class="action-icon-btn" id="btn-export-transcript" title="${t('export_transcript_btn')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
           <button class="action-icon-btn" id="btn-sticky-bar" title="${t('sticky_add')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9l7-7V5a2 2 0 0 0-2-2z"/><path d="M14 21v-6a1 1 0 0 1 1-1h6"/></svg></button>
+          <button class="action-icon-btn" id="btn-regenerate" title="${t('btn_regenerate')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74"/><path d="M3 3v4h4"/></svg></button>
           <div class="action-more-wrap">
             <button class="action-icon-btn" id="btn-more" title="${t('more_actions')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
             <div class="action-menu hidden" id="action-menu">
               <button class="action-menu-item" id="btn-sticky"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9l7-7V5a2 2 0 0 0-2-2z"/><path d="M14 21v-6a1 1 0 0 1 1-1h6"/></svg><span>${t('sticky_add')}</span></button>
-              <button class="action-menu-item" id="btn-regenerate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74"/><path d="M3 3v4h4"/></svg><span>${t('btn_regenerate')}</span></button>
               <button class="action-menu-item" id="btn-html"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span>HTML</span></button>
               <button class="action-menu-item" id="btn-pdf"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg><span>${t('pdf_download')}</span></button>
             </div>
@@ -1298,7 +1298,7 @@ async function openMeeting(path) {
   document.getElementById('btn-pdf').addEventListener('click', () => { document.getElementById('action-menu').classList.add('hidden'); window.print(); });
   document.getElementById('btn-export-transcript').addEventListener('click', () => exportTranscript(path));
   document.getElementById('btn-claude').addEventListener('click', () => openMinutesInClaude(path));
-  document.getElementById('btn-regenerate').addEventListener('click', () => { document.getElementById('action-menu').classList.add('hidden'); toggleRegenBar(); });
+  document.getElementById('btn-regenerate').addEventListener('click', () => toggleRegenBar());
   document.getElementById('btn-regen-cancel').addEventListener('click', () => toggleRegenBar(false));
   document.getElementById('btn-regen-confirm').addEventListener('click', () => confirmRegen(path));
   document.getElementById('btn-edit-notes').addEventListener('click', () => {
@@ -1513,7 +1513,7 @@ function _ownerKey(assignee) {
   const raw = (assignee || '').trim();
   if (!raw) return { key: '__none__', label: t('no_owner') };
   const cleaned = raw.replace(/\((?:claude|manual)\)/ig, '').replace(/\s+/g, ' ').trim();
-  const parts = cleaned.split(/\s*[\/,&]\s*|\s+y\s+|\s+and\s+/i).map(p => p.trim()).filter(Boolean);
+  const parts = cleaned.split(/\s*[\/,&]\s*|\s+y\s+|\s+and\s+/i).map(p => p.trim()).filter(p => p && p !== '-');
   if (!parts.length) return { key: '__none__', label: t('no_owner') };
   const key = parts.map(p => p.toLowerCase()).sort().join('|');
   return { key, label: parts.join(' / ') };
@@ -1729,7 +1729,7 @@ function _showDirHint(index, path) {
   if (isFile) {
     el.textContent = 'Claude modificará este archivo directamente';
     el.className = 'dir-hint dir-hint-ok';
-  } else if (path.toLowerCase().includes('teamsrecorder')) {
+  } else if (path.toLowerCase().includes('Noted')) {
     el.textContent = 'Ajusta la carpeta si el documento está en otro directorio';
     el.className = 'dir-hint dir-hint-warn';
   } else {
@@ -4920,4 +4920,5 @@ function _saveStickies() {
     try { pywebview.api.save_stickies(path, snap); } catch (_) {}
   }, 400);
 }
+
 

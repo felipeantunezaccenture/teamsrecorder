@@ -7,12 +7,12 @@ import threading
 from pathlib import Path
 
 # ── Bootstrap logger ──────────────────────────────────────────────────────────
-# Writes to %LOCALAPPDATA%\TeamsRecorder\startup.log using only stdlib and
+# Writes to %LOCALAPPDATA%\Noted\startup.log using only stdlib and
 # absolute paths BEFORE any import that could fail.  With pythonw.exe every
 # unhandled pre-logging exception is completely silent; this file captures it.
 _BS_LOG = (
     Path(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')))
-    / 'TeamsRecorder' / 'startup.log'
+    / 'Noted' / 'startup.log'
 )
 
 def _bs(msg: str):
@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 
 LOCK_FILE = PROJECT_DIR / '.lock'
 # Named mutex for atomic single-instance guarantee (file lock alone has a TOCTOU race)
-_MUTEX_NAME = 'TeamsRecorder_SingleInstance'
+_MUTEX_NAME = 'Noted_SingleInstance'
 
 
 def _check_single_instance() -> bool:
@@ -248,7 +248,7 @@ def main():
         InboxWatcher(on_wav_ready=tray._on_recording_done).start()
         _start_cli_listener(recorder, tray, get_recording_path)
 
-        log.info("TeamsRecorder iniciado")
+        log.info("Noted iniciado")
         _bs("calling tray.start() — main thread blocks here")
         tray.start()  # bloquea el hilo principal (requerido por pystray en Windows)
         _bs("tray.start() returned — process will exit")

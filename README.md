@@ -1,4 +1,4 @@
-# TeamsRecorder
+# Noted
 
 Daemon de Windows que detecta automáticamente reuniones de Teams, graba el audio, transcribe con Whisper y genera minutas estructuradas usando Claude AI. Todo accesible desde un icono en la bandeja del sistema.
 
@@ -34,19 +34,19 @@ No necesitas ninguna API key. La app usa tu cuenta de claude.ai.
 Abre PowerShell y pega este comando:
 
 ```powershell
-git clone https://github.com/inescgamez99/teamsrecorder.git "$env:USERPROFILE\Documents\TeamsRecorder"
+git clone https://github.com/inescgamez99/noted.git "$env:USERPROFILE\Documents\Noted"
 ```
 
-Esto descarga la app en tu carpeta `Documentos\TeamsRecorder`. Verás unas líneas de texto mientras descarga — cuando vuelva a aparecer el cursor, ha terminado.
+Esto descarga la app en tu carpeta `Documentos\Noted`. Verás unas líneas de texto mientras descarga — cuando vuelva a aparecer el cursor, ha terminado.
 
 ### Paso 2 — Ejecutar el instalador
 
-Abre el Explorador de archivos (el icono de carpeta en la barra de tareas), navega a `Documentos\TeamsRecorder\scripts` y haz doble clic en **`instalar.bat`**.
+Abre el Explorador de archivos (el icono de carpeta en la barra de tareas), navega a `Documentos\Noted\scripts` y haz doble clic en **`instalar.bat`**.
 
 Se abre una ventana negra que instala automáticamente Python, Node.js y Claude CLI si no los tienes. Cuando termine y veas que Claude está listo, escribe exactamente esto y pulsa Enter:
 
 ```
-/teamsrecorder
+/noted
 ```
 
 Claude hace todo lo demás solo: instala las dependencias de la app, configura el arranque automático con Windows y la arranca por primera vez. El proceso tarda entre 5 y 15 minutos dependiendo de tu conexión.
@@ -70,11 +70,11 @@ Al terminar, verás un pequeño icono gris en la esquina inferior derecha de la 
 Cuando haya una nueva versión disponible, abre PowerShell, ve a la carpeta del proyecto y abre Claude:
 
 ```powershell
-cd "$env:USERPROFILE\Documents\TeamsRecorder"
+cd "$env:USERPROFILE\Documents\Noted"
 claude
 ```
 
-Cuando Claude esté listo, escribe `/teamsrecorder`. Detecta automáticamente que ya está instalado, descarga los cambios y reinicia la app sin que tengas que hacer nada más.
+Cuando Claude esté listo, escribe `/noted`. Detecta automáticamente que ya está instalado, descarga los cambios y reinicia la app sin que tengas que hacer nada más.
 
 > El watchdog se encarga de reiniciar automáticamente si el daemon se cae.
 
@@ -99,7 +99,7 @@ OUTPUT_DIR=C:\ruta\donde\guardar\todo
 ## Estructura del proyecto
 
 ```
-TeamsRecorder/
+Noted/
 ├── main.py                 # Entrada principal del daemon
 ├── tray_app.py             # Icono bandeja + pipeline de procesamiento
 ├── popup.py                # Popup de confirmación de grabación
@@ -128,7 +128,7 @@ TeamsRecorder/
 
 **El daemon no arranca / lock file**: Si ves errores de "already running", ejecuta en PowerShell:
 ```powershell
-Remove-Item "C:\ruta\a\TeamsRecorder\.lock" -Force
+Remove-Item "C:\ruta\a\Noted\.lock" -Force
 ```
 
 **Claude no genera minutas**: Asegúrate de que `claude` está en el PATH y has hecho `claude login`.

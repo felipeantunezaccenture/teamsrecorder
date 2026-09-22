@@ -178,7 +178,7 @@ _EMAIL_TEMPLATE = """\
 
     <!-- Footer -->
     <tr><td style="background:#f8f9fc;border-top:1px solid #e5e7eb;padding:16px 40px;font-size:12px;color:#9ca3af;">
-      Generado automáticamente con TeamsRecorder + Claude · {generated_at}
+      Generado automáticamente con Noted + Claude · {generated_at}
     </td></tr>
 
   </table>

@@ -1,14 +1,14 @@
-# TeamsRecorder — funciones compartidas de entorno
+﻿# Noted — funciones compartidas de entorno
 #
 # Una sola implementacion de "donde esta instalado", "que interprete usar" y
 # "como parar/arrancar el daemon". Lo usan watchdog.ps1,
 # restart_after_update.ps1 (llamado por hooks/post-merge) y la skill
-# .claude/skills/teamsrecorder. Ningun consumidor debe reinventar esta logica
+# .claude/skills/noted. Ningun consumidor debe reinventar esta logica
 # ni hardcodear rutas de instalacion.
 #
 # Uso:  . (Join-Path $dir "tr_env.ps1")
 
-$script:TRConfigFile = Join-Path $env:LOCALAPPDATA 'TeamsRecorder\install_path.txt'
+$script:TRConfigFile = Join-Path $env:LOCALAPPDATA 'Noted\install_path.txt'
 
 
 function Test-TRRoot {
@@ -43,8 +43,8 @@ function Get-TRRoot {
     # una ruta ni clonar de nuevo: un segundo clon deja dos apps compitiendo
     # por el mismo .lock.
 
-    if (Test-TRRoot $env:TEAMSRECORDER_HOME) {
-        return (Resolve-Path $env:TEAMSRECORDER_HOME).Path
+    if (Test-TRRoot $env:NOTED_HOME) {
+        return (Resolve-Path $env:NOTED_HOME).Path
     }
 
     if (Test-Path $script:TRConfigFile) {
@@ -64,11 +64,11 @@ function Get-TRRoot {
     }
 
     foreach ($cand in @(
-        (Join-Path $env:USERPROFILE 'Documents\TeamsRecorder'),
-        (Join-Path $env:USERPROFILE 'repos\teamsrecorder'),
-        (Join-Path $env:USERPROFILE 'source\repos\teamsrecorder'),
-        (Join-Path $env:USERPROFILE 'git\teamsrecorder'),
-        (Join-Path $env:USERPROFILE 'TeamsRecorder')
+        (Join-Path $env:USERPROFILE 'Documents\Noted'),
+        (Join-Path $env:USERPROFILE 'repos\noted'),
+        (Join-Path $env:USERPROFILE 'source\repos\noted'),
+        (Join-Path $env:USERPROFILE 'git\noted'),
+        (Join-Path $env:USERPROFILE 'Noted')
     )) {
         if (Test-TRRoot $cand) {
             $cand = (Resolve-Path $cand).Path
@@ -250,7 +250,7 @@ function Update-TRDependencies {
 function Show-TRNotification {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
-        [string]$Title = 'TeamsRecorder'
+        [string]$Title = 'Noted'
     )
 
     try {

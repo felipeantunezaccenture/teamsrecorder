@@ -19,20 +19,20 @@ log = logging.getLogger(__name__)
 
 @click.group()
 def cli():
-    """TeamsRecorder CLI"""
+    """Noted CLI"""
     pass
 
 
 @cli.command()
 def start():
-    """Envía comando 'start' al daemon TeamsRecorder."""
+    """Envía comando 'start' al daemon Noted."""
     CLI_CONTROL_FILE.write_text('start', encoding='utf-8')
     click.echo("Comando 'start' enviado al daemon.")
 
 
 @cli.command()
 def stop():
-    """Envía comando 'stop' al daemon TeamsRecorder."""
+    """Envía comando 'stop' al daemon Noted."""
     CLI_CONTROL_FILE.write_text('stop', encoding='utf-8')
     click.echo("Comando 'stop' enviado al daemon.")
 

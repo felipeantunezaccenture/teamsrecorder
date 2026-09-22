@@ -1,4 +1,4 @@
-# TeamsRecorder Watchdog — reinicia el daemon si se cae
+﻿# Noted Watchdog — reinicia el daemon si se cae
 
 # ── Resolución robusta del directorio de instalación ─────────────────────────
 # $PSScriptRoot es la variable más fiable (PowerShell 3+, establecida por el
@@ -20,7 +20,7 @@ foreach ($candidate in @(
 
 # Último recurso: config guardada por tr_env.ps1 (Save-TRRoot)
 if (-not $dir) {
-    $savedCfg = Join-Path $env:LOCALAPPDATA 'TeamsRecorder\install_path.txt'
+    $savedCfg = Join-Path $env:LOCALAPPDATA 'Noted\install_path.txt'
     if (Test-Path $savedCfg) {
         $saved = (Get-Content $savedCfg -Raw -ErrorAction SilentlyContinue).Trim()
         if (-not [string]::IsNullOrWhiteSpace($saved) -and
@@ -33,11 +33,11 @@ if (-not $dir) {
 # Exploración de ubicaciones conocidas
 if (-not $dir) {
     foreach ($cand in @(
-        (Join-Path $env:USERPROFILE 'Documents\TeamsRecorder'),
-        (Join-Path $env:USERPROFILE 'repos\teamsrecorder'),
-        (Join-Path $env:USERPROFILE 'source\repos\teamsrecorder'),
-        (Join-Path $env:USERPROFILE 'git\teamsrecorder'),
-        (Join-Path $env:USERPROFILE 'TeamsRecorder')
+        (Join-Path $env:USERPROFILE 'Documents\Noted'),
+        (Join-Path $env:USERPROFILE 'repos\noted'),
+        (Join-Path $env:USERPROFILE 'source\repos\noted'),
+        (Join-Path $env:USERPROFILE 'git\noted'),
+        (Join-Path $env:USERPROFILE 'Noted')
     )) {
         if (Test-Path (Join-Path $cand 'tr_env.ps1')) {
             $dir = $cand
@@ -48,7 +48,7 @@ if (-not $dir) {
 
 $mainpy = Join-Path $dir "main.py"
 $lockf  = Join-Path $dir ".lock"
-$logf   = Join-Path $dir "teamsrecorder.log"
+$logf   = Join-Path $dir "noted.log"
 
 # Log definido antes de cargar tr_env.ps1 para capturar cualquier fallo de arranque
 function Log($msg) {
@@ -59,7 +59,7 @@ function Log($msg) {
 if (-not $dir) {
     # Sin $logf válido no podemos escribir en el log; escribir al menos al EventLog
     try {
-        $src = 'TeamsRecorder'
+        $src = 'Noted'
         if (-not [System.Diagnostics.EventLog]::SourceExists($src)) {
             [System.Diagnostics.EventLog]::CreateEventSource($src, 'Application')
         }

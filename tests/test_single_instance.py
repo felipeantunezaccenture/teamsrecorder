@@ -144,11 +144,11 @@ def test_reconoce_las_variantes_del_ejecutable_de_python(tr_dirs, psutil_falso, 
 def test_un_ejecutable_empaquetado_NO_seria_reconocido(tr_dirs, psutil_falso):
     """LIMITACION CONOCIDA: la comprobacion es `'python' in proc.name()`. Si
     algun dia la app se congela con PyInstaller y corre como
-    teamsrecorder.exe, el lock deja de proteger. Queda fijado para que quien
+    noted.exe, el lock deja de proteger. Queda fijado para que quien
     haga ese cambio se encuentre este test."""
     main.LOCK_FILE.write_text('4242')
     psutil_falso['vivos'][4242] = True
-    psutil_falso['nombres'][4242] = 'teamsrecorder.exe'
+    psutil_falso['nombres'][4242] = 'noted.exe'
 
     assert main._check_single_instance() is True, \
         "si esto cambia, la deteccion ya no depende del nombre 'python'"

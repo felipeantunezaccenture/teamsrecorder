@@ -69,12 +69,12 @@ def test_tasks_store_no_escribe_en_el_tablero_real(tr_dirs):
 
 
 def test_no_queda_handler_escribiendo_en_el_log_real():
-    """main.py y cli.py adjuntan un FileHandler sobre teamsrecorder.log al
+    """main.py y cli.py adjuntan un FileHandler sobre noted.log al
     importarse. El conftest lo quita: la suite no debe ensuciar el log que se
     usa para diagnosticar crashes en produccion."""
     import logging
 
-    real_log = REPO / 'teamsrecorder.log'
+    real_log = REPO / 'noted.log'
     for handler in logging.getLogger().handlers:
         if isinstance(handler, logging.FileHandler):
             assert Path(handler.baseFilename) != real_log

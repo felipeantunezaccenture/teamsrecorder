@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-title TeamsRecorder - Instalador
+title Noted - Instalador
 setlocal enabledelayedexpansion
 
 rem -- Relanzarse dentro de cmd /k para que la ventana nunca se cierre sola --
@@ -12,7 +12,7 @@ if not defined TR_STARTED (
 
 echo.
 echo ========================================
-echo   TeamsRecorder - Instalacion
+echo   Noted - Instalacion
 echo ========================================
 echo.
 
@@ -94,7 +94,7 @@ echo ========================================
 echo.
 echo   Cuando Claude arranque, escribe exactamente:
 echo.
-echo       /teamsrecorder
+echo       /noted
 echo.
 echo   Claude instalara el resto automaticamente.
 echo   Pulsa cualquier tecla para continuar...

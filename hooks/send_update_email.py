@@ -1,6 +1,6 @@
 """
 Genera un resumen ejecutivo de los cambios de git y lo envia por email al equipo
-via Outlook. Llamado desde el daemon de TeamsRecorder (tray_app.py) para que
+via Outlook. Llamado desde el daemon de Noted (tray_app.py) para que
 claude corra en el contexto correcto con autenticacion.
 """
 import subprocess
@@ -15,13 +15,13 @@ from config import CLAUDE_BIN as _CLAUDE_BIN, clean_env
 
 # El email va a equipos que han clonado el repo en rutas distintas, asi que no
 # puede llevar un comando con la ruta fija: a quien no clono en Documents le
-# fallaba el pull. La skill /teamsrecorder localiza el clon y actualiza.
-_UPDATE_CMD = '/update-teamsrecorder'
+# fallaba el pull. La skill /noted localiza el clon y actualiza.
+_UPDATE_CMD = '/update-noted'
 _UPDATE_HTML = f"""<p>Para actualizar, abre Claude Code y ejecuta:</p>
 <pre style="background:#f4f4f4;padding:8px;border-radius:4px;font-family:monospace">{_UPDATE_CMD}</pre>
 <p>La app se reiniciará automáticamente.</p>"""
 
-_PROMPT_TEMPLATE = """Eres el asistente de comunicación de TeamsRecorder, una app de Windows que graba reuniones de Teams y genera minutas automáticas con IA.
+_PROMPT_TEMPLATE = """Eres el asistente de comunicación de Noted, una app de Windows que graba reuniones de Teams y genera minutas automáticas con IA.
 
 El equipo ha publicado una nueva versión. Estos son los cambios (mensajes de commit de git):
 {commits}
@@ -60,7 +60,7 @@ def send_update_email(commits_text: str) -> bool:
         return False
 
     html_body = _generate_html(commits_text)
-    subject = f"TeamsRecorder — Novedades {datetime.now().strftime('%d/%m/%Y')}"
+    subject = f"Noted — Novedades {datetime.now().strftime('%d/%m/%Y')}"
 
     try:
         import win32com.client
@@ -112,7 +112,7 @@ def _generate_html(commits_text: str) -> str:
     items = '\n'.join(f'<li>{l}</li>' for l in lines)
     return (
         f"<p>Hola,</p>"
-        f"<p>TeamsRecorder ha recibido una nueva actualización:</p>"
+        f"<p>Noted ha recibido una nueva actualización:</p>"
         f"<p><strong><u>Cambios</u></strong></p>"
         f"<ul>{items}</ul>"
         f"{_UPDATE_HTML}"

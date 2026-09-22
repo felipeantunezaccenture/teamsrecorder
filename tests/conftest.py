@@ -69,7 +69,7 @@ def _import_app_modules() -> None:
     # main.py y cli.py llaman a logging.basicConfig con un FileHandler sobre el
     # log REAL de la app nada mas importarse. Si se deja puesto, la suite
     # escribe en el fichero que se usa para diagnosticar crashes en produccion.
-    real_log = REPO / 'teamsrecorder.log'
+    real_log = REPO / 'noted.log'
     root = logging.getLogger()
     for handler in list(root.handlers):
         if isinstance(handler, logging.FileHandler):
@@ -102,7 +102,7 @@ _FILE_SEAMS = {
     '_CANCEL_FILE': (('tray_app',), '.cancelled_jobs.txt'),
     'LOCK_FILE': (('main',), '.lock'),
     'CLI_CONTROL_FILE': (('config', 'cli', 'main'), '.cli_command'),
-    'LOG_FILE': (('config', 'cli', 'main'), 'teamsrecorder.log'),
+    'LOG_FILE': (('config', 'cli', 'main'), 'noted.log'),
 }
 
 # Datos reales del usuario que la suite NUNCA debe tocar.

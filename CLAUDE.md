@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This App Does
 
-**TeamsRecorder** is a Windows desktop daemon that auto-detects Teams calls, records audio (mic + system loopback), transcribes via Whisper, generates structured meeting minutes using Claude, extracts and enriches action items, and surfaces everything through a system tray icon + pywebview web UI.
+**Noted** is a Windows desktop daemon that auto-detects Teams calls, records audio (mic + system loopback), transcribes via Whisper, generates structured meeting minutes using Claude, extracts and enriches action items, and surfaces everything through a system tray icon + pywebview web UI.
 
 ## Entry Points & Commands
 
@@ -129,4 +129,4 @@ Action blocks embedded in markdown:
 
 ## Logging
 
-All modules log to both `teamsrecorder.log` (project root) and stdout at INFO level. To debug, increase to DEBUG in `main.py`'s `logging.basicConfig` call.
+All modules log to both `noted.log` (project root) and stdout at INFO level. To debug, increase to DEBUG in `main.py`'s `logging.basicConfig` call.
