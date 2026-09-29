@@ -503,6 +503,14 @@ class TrayApp:
                          f"(idioma detectado '{detected_language}'; la duracion "
                          f"la registra faster_whisper justo encima)")
                 self._notify('Noted', s['no_speech'])
+                # Y se saca de recordings/, como hace el camino bueno. Sin
+                # esto la grabacion se queda ahi para siempre: _recover_pending
+                # busca WAVs sin minutas, y una grabacion sin voz NUNCA las
+                # tendra, asi que se reencolaba en CADA arranque del daemon.
+                # Cada vez costaba una carga de Whisper — ~1 GB y 15 s — en una
+                # maquina donde quedarse sin memoria es lo que tumba el worker
+                # del loopback y hace perder las voces de los demas.
+                self._move_to_processed(wav_path, transcript_path)
                 self.set_processing('')
                 return
 

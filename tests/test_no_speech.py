@@ -91,6 +91,57 @@ def test_sin_voz_si_guarda_el_idioma_detectado(pipeline, tray):
     assert lang.exists() and lang.read_text().strip() == 'en'
 
 
+# ── El WAV tiene que salir de recordings/ ────────────────────────────────
+#
+# INCIDENTE (29/09/2026). Una grabacion de 8,5s sin voz del 22/09 seguia en
+# recordings/ una semana despues, y se reprocesaba en CADA arranque del
+# daemon. _recover_pending busca WAVs que no tengan minutas, y una grabacion
+# sin voz nunca las va a tener: bucle infinito.
+#
+# El coste no es teorico. Cada pasada carga un modelo de Whisper —unos 1 GB y
+# 15 segundos— en un portatil donde quedarse sin memoria es exactamente lo que
+# impide arrancar al worker del loopback, y eso ya costo las voces de los demas
+# en una reunion de 36 minutos.
+
+def test_sin_voz_saca_el_wav_de_recordings(pipeline, tray):
+    """EL TEST CLAVE. Sin esto la grabacion se reprocesa para siempre."""
+    wav, _ = pipeline(('', 'en'))
+    tray._run_pipeline_sync(wav)
+
+    assert not wav.exists(), "el WAV sigue en recordings/: se reencolara"
+    assert (ta.RECORDINGS_DIR / 'processed' / wav.name).exists(), \
+        "no aparecio en processed/"
+
+
+def test_sin_voz_ya_no_lo_reencola_el_arranque(pipeline, tray, monkeypatch):
+    """La consecuencia que importa: tras procesarla, _recover_pending ya no la
+    ve. Es lo que rompe el bucle, y se comprueba con la funcion de verdad."""
+    wav, _ = pipeline(('', 'en'))
+    tray._run_pipeline_sync(wav)
+
+    encolados = []
+    monkeypatch.setattr(tray, '_enqueue_pipeline', encolados.append, raising=False)
+    monkeypatch.setattr(ta.time, 'sleep', lambda _s: None)
+    tray._pipeline_queue = __import__('queue').Queue()
+    tray._pipeline_queued = []
+    tray._recover_pending()
+
+    pendientes = [p for p in list(tray._pipeline_queue.queue) + encolados if p]
+    assert not any(str(wav.name) in str(p) for p in pendientes), \
+        f"la grabacion sin voz se volvio a encolar: {pendientes}"
+
+
+def test_un_fallo_real_NO_mueve_el_wav(pipeline, tray):
+    """CONTROL, y es el limite del arreglo: si transcribe() fallo de verdad, la
+    grabacion tiene que quedarse donde esta para reintentarla al arrancar.
+    Moverla ahi seria perderla."""
+    wav, _ = pipeline(None)
+    tray._run_pipeline_sync(wav)
+
+    assert wav.exists(), "un fallo real no puede sacar el WAV de recordings/"
+    assert not (ta.RECORDINGS_DIR / 'processed' / wav.name).exists()
+
+
 # ── Y un fallo de verdad SIGUE siendo un fallo ───────────────────────────
 
 def test_un_fallo_real_sigue_siendo_error(pipeline, tray, caplog):
