@@ -1,3 +1,4 @@
+import glob
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,10 +25,44 @@ def _recording_timestamp(path: Path) -> str:
     return ''
 
 
+# Sufijo para dos grabaciones con el mismo nombre en el mismo minuto. Es el mismo
+# convenio que ya usa la papelera (stem__2).
+_COLLISION_SEP = '__'
+
+
+def _recording_stem_taken(stem: str) -> bool:
+    """True si ya existe CUALQUIER fichero de una grabacion con este stem.
+
+    No basta con mirar el .wav final: mientras se graba solo existen los
+    temporales (.mic.part, .loop.part); tras procesar, el WAV se va a processed/;
+    y el transcript (_transcript.txt) cuelga del mismo stem. Pisar cualquiera
+    de ellos mezcla o pierde datos de otra grabacion.
+    """
+    pat = glob.escape(stem)
+    for folder in (RECORDINGS_DIR, RECORDINGS_DIR / 'processed'):
+        if not folder.is_dir():
+            continue
+        if next(folder.glob(f'{pat}.*'), None) or next(folder.glob(f'{pat}_transcript.*'), None):
+            return True
+    return False
+
+
 def get_recording_path(name: str = 'recording') -> Path:
+    """Ruta para una grabacion nueva, que no pise ninguna anterior.
+
+    El nombre solo llega al minuto. El 2026-10-08 dos pruebas de "Grabar ahora"
+    a las 14:05 recibieron el mismo nombre y la segunda sobrescribio la primera:
+    se perdieron 14 s de audio. Ahora, si el nombre ya esta en uso, se anade
+    __2, __3... El formato YYYY-MM-DD_HH-MM_<nombre> no cambia, porque varias
+    partes de la app lo leen (sesiones, recuperacion al arrancar, minutas).
+    """
     ts = datetime.now().strftime('%Y-%m-%d_%H-%M')
-    slug = _slugify(name)
-    return RECORDINGS_DIR / f"{ts}_{slug}.wav"
+    base = f"{ts}_{_slugify(name)}"
+    stem, n = base, 2
+    while _recording_stem_taken(stem):
+        stem = f"{base}{_COLLISION_SEP}{n}"
+        n += 1
+    return RECORDINGS_DIR / f"{stem}.wav"
 
 
 def get_transcript_path(recording_path: Path) -> Path:
@@ -79,4 +114,3 @@ def cleanup_old_minutes():
                     f.unlink()
                 except OSError:
                     pass
-
