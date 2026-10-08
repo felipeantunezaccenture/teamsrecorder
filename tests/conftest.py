@@ -229,6 +229,8 @@ def tray_factory(tr_dirs):
         app._MERGE_GRACE = 90
         app._cancelled = set()
         app._cancel_lock = threading.Lock()
+        app._mic_state = None
+        app._icon_base = (tray_app._ICON_IDLE, 'Noted')
         return app
 
     return make

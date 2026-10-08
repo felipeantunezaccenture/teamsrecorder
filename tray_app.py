@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import mic_status
 from config import MINUTES_DIR, RECORDINGS_DIR, PROJECT_DIR, get_ui_language
 from transcriber import TranscriptionCancelled as _Cancelled
 
@@ -59,6 +60,10 @@ _STR = {
         minutes_failed='No se pudieron generar las minutas. Revisa el log para más detalles.',
         mic_only='Grabando SOLO tu microfono: no se captura el audio de los demas. Si usas auriculares, sus voces no quedaran en la grabacion.',
         mic_unavailable='No se pudo acceder al micrófono. Comprueba que no lo usa otra app.',
+        mic_menu_muted='Micrófono: {name} — SILENCIADO (clic para activar)',
+        mic_menu_active='Micrófono: {name} — activo (clic para silenciar)',
+        mic_tip_muted='micro SILENCIADO',
+        mic_muted_warning='Tu micrófono ({name}) está silenciado en Windows: no se grabará tu voz. Actívalo desde el menú de Noted.',
         disk_full='Disco lleno: la grabación se ha interrumpido. Libera espacio.',
         cancel_job='Descartar esta reunion (papelera)',
         job_cancelled='Reunion descartada: el audio y lo generado se han movido a la papelera.',
@@ -82,6 +87,10 @@ _STR = {
         minutes_failed='Minutes generation failed. Check the log for details.',
         mic_only='Recording your microphone ONLY — system audio is not being captured. If you are on a headset, the others will not be in the recording.',
         mic_unavailable='Could not access the microphone. Check that no other app is using it.',
+        mic_menu_muted='Microphone: {name} — MUTED (click to unmute)',
+        mic_menu_active='Microphone: {name} — on (click to mute)',
+        mic_tip_muted='mic MUTED',
+        mic_muted_warning='Your microphone ({name}) is muted in Windows: your voice will not be recorded. Unmute it from the Noted menu.',
         disk_full='Disk full: the recording has stopped. Free up some space.',
         cancel_job='Discard this meeting (bin)',
         job_cancelled='Meeting discarded: the audio and generated files were moved to the bin.',
@@ -106,6 +115,27 @@ def _make_icon(color: str):
 _ICON_IDLE       = _make_icon('#6c7086')
 _ICON_RECORDING  = _make_icon('#f38ba8')
 _ICON_PROCESSING = _make_icon('#f9e2af')
+
+_MIC_POLL_S = 2
+_BADGED: dict[int, object] = {}
+
+
+def _with_mic_badge(img):
+    """El icono con una marca roja de micro silenciado en la esquina inferior.
+
+    Se cachea por imagen base: el icono se repinta en cada cambio de estado y
+    dibujarlo de nuevo cada vez no aporta nada.
+    """
+    cached = _BADGED.get(id(img))
+    if cached is not None:
+        return cached
+    from PIL import ImageDraw
+    out = img.copy()
+    d = ImageDraw.Draw(out)
+    d.ellipse([32, 32, 63, 63], fill='#d20f39', outline='#ffffff', width=3)
+    d.line([39, 56, 56, 39], fill='#ffffff', width=5)
+    _BADGED[id(img)] = out
+    return out
 
 
 class TrayApp:
@@ -133,7 +163,13 @@ class TrayApp:
         self._cancelled: set[str] = set()
         self._cancel_lock = threading.Lock()
 
+        # Microfono por defecto y si esta silenciado (mic_status). El icono base
+        # se guarda para poder repintarlo con o sin la marca roja cuando cambia.
+        self._mic_state: mic_status.MicState | None = None
+        self._icon_base = (_ICON_IDLE, 'Noted')
+
         threading.Thread(target=self._pipeline_loop, daemon=True, name='PipelineWorker').start()
+        threading.Thread(target=self._mic_poller, daemon=True, name='MicStatusPoller').start()
         threading.Thread(target=self._recover_pending, daemon=True, name='PipelineRecovery').start()
         threading.Thread(target=self._notification_poller, daemon=True, name='NotificationPoller').start()
         if (PROJECT_DIR / 'email_brain_updater.py').exists():
@@ -157,6 +193,9 @@ class TrayApp:
                                  self._cancel_recording,
                                  visible=lambda _: bool(self._recorder.is_recording
                                                         or self._active_job_stem())),
+                pystray.MenuItem(lambda _: self._mic_menu_label(),
+                                 self._toggle_mic_mute,
+                                 visible=lambda _: getattr(self, '_mic_state', None) is not None),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(s['view_minutes'], self._open_actions_ui, default=True),
                 pystray.Menu.SEPARATOR,
@@ -223,12 +262,93 @@ class TrayApp:
                 self._set_icon(_ICON_IDLE, 'Noted')
 
     def _set_icon(self, img, tooltip: str):
+        self._icon_base = (img, tooltip)
         try:
             if self._icon:
-                self._icon.icon = img
-                self._icon.title = tooltip
+                self._icon.icon = self._mic_decorated_icon(img)
+                self._icon.title = self._mic_decorated_title(tooltip)
         except Exception:
             pass
+
+    # ── Microfono: cual es y si esta silenciado ───────────────────────────────
+
+    def _mic_muted(self) -> bool:
+        st = getattr(self, '_mic_state', None)
+        return bool(st and st.muted)
+
+    def _mic_decorated_icon(self, img):
+        return _with_mic_badge(img) if self._mic_muted() else img
+
+    def _mic_decorated_title(self, tooltip: str) -> str:
+        if not self._mic_muted():
+            return tooltip
+        s = _STR.get(get_ui_language(), _STR['en'])
+        return f"{tooltip} · {s['mic_tip_muted']}"
+
+    def _mic_menu_label(self) -> str:
+        st = getattr(self, '_mic_state', None)
+        if st is None:
+            return ''
+        s = _STR.get(get_ui_language(), _STR['en'])
+        return (s['mic_menu_muted'] if st.muted else s['mic_menu_active']).format(name=st.name)
+
+    def _refresh_icon(self):
+        img, tooltip = getattr(self, '_icon_base', (_ICON_IDLE, 'Noted'))
+        self._set_icon(img, tooltip)
+        try:
+            if self._icon:
+                self._icon.update_menu()
+        except Exception:
+            pass
+
+    def _mic_poll_once(self):
+        """Lee el micro por defecto y repinta solo si algo cambio.
+
+        Cambia solo al enchufar o quitar unos auriculares, o al pulsar la tecla de
+        silencio, asi que basta con comparar con el ultimo estado leido.
+        """
+        try:
+            state = mic_status.read_default_mic()
+        except Exception:
+            state = None
+        if state == getattr(self, '_mic_state', None):
+            return
+        self._mic_state = state
+        if state is not None:
+            log.info(f"Microfono por defecto: {state.name} — silenciado={state.muted}")
+        self._refresh_icon()
+
+    def _mic_poller(self):
+        mic_status.com_init()
+        while True:
+            try:
+                self._mic_poll_once()
+            except Exception as e:
+                log.debug(f"MicStatusPoller: {e}")
+            time.sleep(_MIC_POLL_S)
+
+    def _toggle_mic_mute(self):
+        mic_status.com_init()
+        st = getattr(self, '_mic_state', None) or mic_status.read_default_mic()
+        if st is None:
+            return
+        if mic_status.set_default_mic_muted(not st.muted):
+            self._mic_poll_once()
+
+    def warn_if_mic_muted(self):
+        """Al empezar a grabar: si el micro esta silenciado, avisar YA.
+
+        Sin esto el problema solo aparecia al final, como un 'sin voz' tras la
+        transcripcion, con la reunion ya perdida. No bloquea la grabacion: el
+        audio del sistema (los demas en una llamada) se sigue capturando.
+        """
+        mic_status.com_init()
+        st = mic_status.read_default_mic()
+        if st is None or not st.muted:
+            return
+        log.warning(f"Grabando con el microfono silenciado en Windows: {st.name}")
+        s = _STR.get(get_ui_language(), _STR['en'])
+        self._notify('Noted ⚠', s['mic_muted_warning'].format(name=st.name))
 
     def _ticker(self):
         while not self._ticker_stop.wait(1.0):
@@ -240,7 +360,7 @@ class TrayApp:
                 tooltip = f'Noted - {rec_str}' + (f' | {proc}' if proc else '')
                 try:
                     if self._icon:
-                        self._icon.title = tooltip
+                        self._icon.title = self._mic_decorated_title(tooltip)
                 except Exception:
                     pass
             self._write_status()
@@ -883,6 +1003,7 @@ class TrayApp:
             # on_recording_stopped se asigna una sola vez al inicio (en main.py)
             self._recorder.start(path)
             self.set_recording(True, path)
+            threading.Thread(target=self.warn_if_mic_muted, daemon=True, name='MicMuteCheck').start()
             def _send_notice():
                 try:
                     import teams_chat as _tc

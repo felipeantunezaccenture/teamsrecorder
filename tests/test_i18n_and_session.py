@@ -37,11 +37,12 @@ def test_ningun_texto_esta_vacio(lang):
 
 @pytest.mark.parametrize('lang', ['es', 'en'])
 def test_todos_los_textos_admiten_el_formato_con_n(lang):
-    """Las claves con contador usan {n}. Un .format(n=...) sobre una clave que
-    lleve otra llave sin rellenar lanzaria KeyError."""
+    """Las claves con contador usan {n} y las del microfono usan {name}. Un
+    .format(...) sobre una clave que lleve cualquier OTRA llave sin rellenar
+    lanzaria KeyError: ese es el caso que este test sigue cazando."""
     for clave, texto in ta._STR[lang].items():
         try:
-            texto.format(n=1)
+            texto.format(n=1, name='Microfono de prueba')
         except (KeyError, IndexError) as e:
             pytest.fail(f"_STR['{lang}']['{clave}'] revienta con .format(n=1): {e}")
 

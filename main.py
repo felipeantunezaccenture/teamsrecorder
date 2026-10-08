@@ -30,7 +30,9 @@ _bs(f"  sys.path={sys.path!r}")
 # ─────────────────────────────────────────────────────────────────────────────
 
 _bs("importing config…")
-from config import PROJECT_DIR, LOG_FILE, CLI_CONTROL_FILE
+# Import tardio a proposito: el log de arranque de arriba tiene que existir ANTES,
+# para registrar justo los fallos de importacion de config.
+from config import PROJECT_DIR, LOG_FILE, CLI_CONTROL_FILE  # noqa: E402
 _bs(f"config OK  PROJECT_DIR={PROJECT_DIR!r}  LOG_FILE={LOG_FILE!r}")
 
 # Logging
@@ -192,6 +194,8 @@ def main():
                         return
                     tray.set_recording(True, path)
                     log.info(f"{'Continuando (reconexión)' if continuing else 'Grabación iniciada'}: {path.name}")
+                    threading.Thread(target=tray.warn_if_mic_muted, daemon=True,
+                                     name='MicMuteCheck').start()
                     def _send_notice():
                         try:
                             import teams_chat as _tc
