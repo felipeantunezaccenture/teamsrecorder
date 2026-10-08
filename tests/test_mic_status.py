@@ -102,6 +102,64 @@ def test_cambiar_devuelve_false_si_windows_falla(monkeypatch):
     assert mic_status.set_default_mic_muted(False) is False
 
 
+# ── Vida de los objetos COM: el fallo que tumbo el daemon ─────────────────
+#
+# INCIDENTE (2026-10-08, el mismo dia). La primera version convertia el puntero
+# con ctypes.cast(). Eso crea un segundo puntero al mismo objeto COM sin AddRef,
+# y al recolectar los dos se libera dos veces. Leyendo cada 2 s, el daemon cayo
+# con 0xC0000005 a los 100 s de arrancar. Aislado: 1.200 lecturas en 3 hilos
+# dieron "access violation" en comtypes Release(). Con QueryInterface, cero.
+
+def test_el_endpoint_se_obtiene_con_queryinterface_no_con_cast():
+    """El patron correcto, fijado: Activate() y luego QueryInterface()."""
+    pytest.importorskip('pycaw.pycaw')
+    esperado = object()
+
+    class Interfaz:
+        def QueryInterface(self, iid):
+            return esperado
+
+    class Dispositivo:
+        def Activate(self, iid, ctx, params):
+            return Interfaz()
+
+    assert mic_status._endpoint_volume(Dispositivo()) is esperado, \
+        "no paso por QueryInterface: un cast() vuelve a liberar dos veces"
+
+
+@pytest.mark.integration
+def test_leer_el_micro_muchas_veces_en_varios_hilos_no_corrompe_memoria():
+    """La reproduccion real del incidente, contra el dispositivo de verdad.
+
+    Corre en un proceso aparte porque una liberacion doble no siempre tumba el
+    proceso: a veces solo deja 'Exception ignored ... access violation' en stderr.
+    Eso es lo que se busca.
+
+    ES PROBABILISTA: con cast() reventó en 1.200 lecturas y no en 450. La
+    proteccion determinista es el test de QueryInterface de arriba; este es una
+    comprobacion extra contra el micro real.
+    """
+    import subprocess
+    import sys
+    if mic_status.read_default_mic() is None:
+        pytest.skip('no hay microfono en esta maquina')
+    script = (
+        'import threading, mic_status\n'
+        'def p():\n'
+        '    mic_status.com_init()\n'
+        '    for _ in range(400): mic_status.read_default_mic()\n'
+        'hs = [threading.Thread(target=p) for _ in range(3)]\n'
+        '[h.start() for h in hs]; [h.join() for h in hs]\n'
+        'print("FIN")\n'
+    )
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parent.parent   # no PROJECT_DIR: los tests lo redirigen
+    r = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True,
+                       timeout=240, cwd=str(raiz))
+    assert 'access violation' not in r.stderr.lower(), r.stderr[-800:]
+    assert 'FIN' in r.stdout, f"el proceso no termino:\n{r.stderr[-800:]}"
+
+
 # ── El icono ──────────────────────────────────────────────────────────────
 
 def test_micro_silenciado_pone_la_marca_y_lo_dice_el_tooltip(bandeja, monkeypatch):

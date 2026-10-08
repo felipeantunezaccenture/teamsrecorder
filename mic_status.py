@@ -49,12 +49,19 @@ def com_init() -> None:
 
 
 def _endpoint_volume(device):
-    from ctypes import POINTER, cast
+    """QueryInterface, NUNCA ctypes.cast.
 
+    cast() crea un segundo puntero al mismo objeto COM sin AddRef; al recolectar
+    los dos, el objeto se libera dos veces. Con el patron "lo creo una vez y lo
+    guardo" no se nota, pero leyendo cada 2 s si: el 2026-10-08 el daemon cayo
+    con 0xC0000005 a los 100 s, y 1.200 lecturas en 3 hilos reprodujeron
+    "access violation" en comtypes Release(). Es el patron que ya usa
+    teams_detector._check_mic_session.
+    """
     from comtypes import CLSCTX_ALL
     from pycaw.pycaw import IAudioEndpointVolume
-    return cast(device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None),
-                POINTER(IAudioEndpointVolume))
+    interface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    return interface.QueryInterface(IAudioEndpointVolume)
 
 
 def read_default_mic() -> MicState | None:
