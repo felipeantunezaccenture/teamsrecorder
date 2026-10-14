@@ -30,8 +30,38 @@ if (Test-Path $sentinel) {
     }
 }
 
-# Detener instancia existente
+# -- GUARDRAIL: no reiniciar mientras se PROCESA una reunion -------------------
+# El sentinel de arriba solo cubre la grabacion. El 2026-10-13 un reinicio con la
+# grabacion ya terminada corto el pipeline 39 s despues de guardar las minutas, y
+# se perdieron las notas de coaching y las acciones de esa reunion.
+# .pipeline_status.json lista grabacion, procesado y cola; en reposo esta vacio.
+# Se lee dos veces: entre sacar un trabajo de la cola y marcarlo como procesando
+# hay un instante en que la lista sale vacia. Solo bloquea con el daemon vivo: si
+# murio a mitad, el fichero se queda con trabajos y no debe impedir arrancarlo.
 $lock = Join-Path $root ".lock"
+$status = Join-Path $root ".pipeline_status.json"
+$daemonAlive = $false
+if (Test-Path $lock) {
+    $lockPid = (Get-Content $lock -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($lockPid -and (Get-Process -Id ([int]$lockPid.Trim()) -ErrorAction SilentlyContinue)) { $daemonAlive = $true }
+}
+function Get-NotedJobs {
+    try { return @((Get-Content $status -Raw -ErrorAction Stop | ConvertFrom-Json).jobs) } catch { return @() }
+}
+if ($daemonAlive) {
+    $jobs = @(Get-NotedJobs)
+    if ($jobs.Count -eq 0) { Start-Sleep -Seconds 3; $jobs = @(Get-NotedJobs) }
+    if ($jobs.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  *** NOTED ESTA PROCESANDO - NO SE PUEDE REINICIAR ***" -ForegroundColor Red
+        foreach ($j in $jobs) { Write-Host ("    - {0}: {1}" -f $j.stage, $j.label) -ForegroundColor Yellow }
+        Write-Host "  Espera a que termine (icono de la bandeja) antes de reiniciar." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+}
+
+# Detener instancia existente
 if (Test-Path $lock) {
     $pid_in_lock = (Get-Content $lock -ErrorAction SilentlyContinue).Trim()
     if ($pid_in_lock) {
