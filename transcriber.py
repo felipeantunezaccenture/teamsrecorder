@@ -7,6 +7,14 @@ from pathlib import Path
 
 from config import WHISPER_MODEL, WHISPER_LANGUAGE, OPENAI_API_KEY, ME_NAME
 
+# CTranslate2 trae Intel oneMKL dentro, y su gestor de memoria guarda los buferes
+# liberados en vez de devolverlos. Medido el 14/10/2026: con el modelo soltado tras
+# cada reunion (ver transcribe()) quedaban ~90 MB mas por transcripcion; con esto,
+# ~5 MB, y el texto sale identico. Es el control que documenta Intel y MKL lo lee
+# al cargarse, asi que tiene que fijarse antes de importar faster_whisper, que aqui
+# solo ocurre dentro de _get_model(). setdefault: un valor puesto a mano se respeta.
+os.environ.setdefault('MKL_DISABLE_FAST_MM', '1')
+
 log = logging.getLogger(__name__)
 
 _model = None
@@ -503,6 +511,16 @@ def transcribe(
                 if on_complete:
                     on_complete(None, 'es')
                 return None
+        finally:
+            # El modelo NO se queda cargado entre reuniones. Medido el 14/10/2026:
+            # 'medium' en int8 con cpu_threads=12 reserva 4,7 GB de memoria al
+            # cargarse (solo toca 0,9 GB) y el daemon lo guardaba para siempre, asi
+            # que tras la primera transcripcion vivia en ~4,9 GB durante dias. Esa
+            # reserva cuenta contra el limite de memoria de Windows, que agrandaba
+            # el pagefile hasta dejar el disco sin espacio. Liberarlo devuelve
+            # 4,2 GB; volver a cargarlo en la siguiente reunion cuesta 30-60 s
+            # frente a 10-20 min de transcripcion.
+            _release_model()
         if on_complete:
             on_complete(text, lang)
         return text, lang
