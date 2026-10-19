@@ -60,7 +60,7 @@ _PARADAS = ('Stop-TRWatchdog', 'Stop-TRDaemon', 'Start-TRDaemon')
 # -- Comprobacion barata, sin PowerShell: corre en CI y en pre-commit --------
 
 @pytest.mark.unit
-@pytest.mark.parametrize('script', ['restart_after_update.ps1'])
+@pytest.mark.parametrize('script', ['restart_after_update.ps1', 'scripts/restart_noted.ps1'])
 def test_todo_reinicio_consulta_la_puerta_antes_de_parar_nada(script):
     """LA COMPROBACION QUE HABRIA EVITADO EL SEGUNDO INCIDENTE: el fallo no fue
     una puerta mal escrita sino una ruta de reinicio que tenia la suya propia.
