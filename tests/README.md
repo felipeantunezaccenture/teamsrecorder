@@ -111,6 +111,7 @@ Y un caso **sin costura**: `outlook_sender._build_email_html` lee
 | Fixture | Para qué |
 |---|---|
 | `tr_dirs` (autouse) | Redirige todas las rutas de la app a `tmp_path` y devuelve la raíz |
+| `live_spawns` (autouse) | Ningún test lanza el proceso de transcripción en vivo: `set_recording(True)` lo lanzaría y cargaría Whisper. Devuelve las rutas con que se pidió lanzar. El `spawn` real está en `conftest.REAL_LIVE_SPAWN` |
 | `tray_factory` / `tray` | `TrayApp` sin arrancar hilos |
 | `wav_factory` | WAV sintético de la duración y sample rate que pidas |
 | `fake_whisper_model` | Modelo falso con la forma de faster-whisper (generador perezoso) |

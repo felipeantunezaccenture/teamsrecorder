@@ -94,15 +94,22 @@ def list_recordings(limit: int = 10) -> list[Path]:
 def cleanup_old_recordings(days: int = 10):
     cutoff = datetime.now() - timedelta(days=days)
     audio_patterns = ('*.wav', '*.mp3')
-    aux_patterns   = ('*.lang', '*.partial', '*.context', '*.live')
+    # *.part: temporales que un corte del daemon dejo huerfanos (nadie los
+    # convierte en WAV). *.live.*: restos de la transcripcion en vivo
+    # (.live.jsonl, .live.json, su .tmp y .live.finishing) cuando no se usaron.
+    # *.live: el formato de la transcripcion en vivo anterior, que esta sustituye.
+    aux_patterns   = ('*.lang', '*.partial', '*.context', '*.part', '*.live.*', '*.live')
     for d in (RECORDINGS_DIR, RECORDINGS_DIR / 'processed'):
         for pattern in audio_patterns + aux_patterns:
             for f in d.glob(pattern):
-                if datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
-                    try:
+                # Un fichero puede desaparecer entre el glob y el stat (el .tmp
+                # del estado en vivo se renombra al momento). Esto corre al
+                # arrancar el daemon: una excepcion aqui lo tumbaria.
+                try:
+                    if datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
                         f.unlink()
-                    except OSError:
-                        pass
+                except OSError:
+                    pass
 
 
 def cleanup_old_minutes():

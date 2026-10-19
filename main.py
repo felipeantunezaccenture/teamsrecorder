@@ -93,24 +93,36 @@ def _check_single_instance() -> bool:
     return True
 
 
+def _handle_cli_command(cmd, recorder, tray, get_recording_path):
+    """Un comando de .cli_command: start, start-live, stop, o 'live <stem>'."""
+    if cmd in ('start', 'start-live') and not recorder.is_recording:
+        path = get_recording_path('cli')
+        recorder.on_recording_stopped = tray._on_recording_done
+        recorder.start(path)
+        tray.set_recording(True, path, mode='live' if cmd == 'start-live' else 'background')
+        log.info("Grabación iniciada por CLI")
+    elif cmd == 'live' or cmd.startswith('live '):
+        # 'live <stem>' lo manda el panel: solo vale para la grabacion en curso
+        # (switch_to_live comprueba el stem).
+        stem = cmd[5:].strip() or None
+        if tray.switch_to_live(stem):
+            log.info("Transcript en vivo activado por CLI/panel")
+    elif cmd == 'stop' and recorder.is_recording:
+        recorder.stop()
+        tray.set_recording(False)
+        log.info("Grabación detenida por CLI")
+
+
 def _start_cli_listener(recorder, tray, get_recording_path):
     def _loop():
         while True:
             time.sleep(0.5)
             try:
                 if CLI_CONTROL_FILE.exists():
-                    cmd = CLI_CONTROL_FILE.read_text().strip()
+                    # utf-8: 'live <stem>' lleva el nombre de la reunion (acentos).
+                    cmd = CLI_CONTROL_FILE.read_text(encoding='utf-8', errors='replace').strip()
                     CLI_CONTROL_FILE.unlink()
-                    if cmd == 'start' and not recorder.is_recording:
-                        path = get_recording_path('cli')
-                        recorder.on_recording_stopped = tray._on_recording_done
-                        recorder.start(path)
-                        tray.set_recording(True, path)
-                        log.info("Grabación iniciada por CLI")
-                    elif cmd == 'stop' and recorder.is_recording:
-                        recorder.stop()
-                        tray.set_recording(False)
-                        log.info("Grabación detenida por CLI")
+                    _handle_cli_command(cmd, recorder, tray, get_recording_path)
             except Exception as e:
                 log.warning(f"CLI listener error: {e}")
 
@@ -181,7 +193,7 @@ def main():
                 except Exception:
                     _lang = 'es'
 
-                def _start_recording(continuing):
+                def _start_recording(continuing, mode='background'):
                     _popup_active[0] = False
                     if continuing:
                         tray.request_continuation()
@@ -192,8 +204,9 @@ def main():
                         log.error(f"No se pudo iniciar la grabación: {e}")
                         tray.warn_mic_unavailable(str(e))
                         return
-                    tray.set_recording(True, path)
-                    log.info(f"{'Continuando (reconexión)' if continuing else 'Grabación iniciada'}: {path.name}")
+                    tray.set_recording(True, path, mode=mode)
+                    log.info(f"{'Continuando (reconexión)' if continuing else 'Grabación iniciada'}"
+                             f"{' (en vivo)' if mode == 'live' else ''}: {path.name}")
                     threading.Thread(target=tray.warn_if_mic_muted, daemon=True,
                                      name='MicMuteCheck').start()
                     def _send_notice():
@@ -205,8 +218,14 @@ def main():
                     threading.Thread(target=_send_notice, daemon=True, name='TeamsChatNotice').start()
 
                 if is_reconnect:
+                    # "Seguir" continua en el modo de la parte anterior.
+                    prev_mode = tray.last_recording_mode or 'background'
+
                     def on_yes():
-                        _start_recording(continuing=True)
+                        _start_recording(continuing=True, mode=prev_mode)
+
+                    def on_live():
+                        _start_recording(continuing=True, mode='live')
 
                     def on_no():
                         _popup_active[0] = False
@@ -214,25 +233,30 @@ def main():
                         log.info("Reconexión: usuario NO continúa — se cierra la reunión anterior")
 
                     if _lang == 'en':
-                        RecordingPopup(on_yes=on_yes, on_no=on_no,
+                        RecordingPopup(on_yes=on_yes, on_no=on_no, on_alt=on_live,
                                        title='Same meeting detected',
                                        subtitle='Keep recording and merge with the previous one?',
-                                       yes_label='  Keep  ', no_label='No, close').show()
+                                       yes_label='  Keep  ', alt_label='Keep + live',
+                                       no_label='No, close').show()
                     else:
-                        RecordingPopup(on_yes=on_yes, on_no=on_no,
+                        RecordingPopup(on_yes=on_yes, on_no=on_no, on_alt=on_live,
                                        title='Misma reunión detectada',
                                        subtitle='¿Seguir grabando y unirla a la anterior?',
-                                       yes_label='  Seguir  ', no_label='No, cerrar').show()
+                                       yes_label='  Seguir  ', alt_label='Seguir + en vivo',
+                                       no_label='No, cerrar').show()
                 else:
                     def on_yes():
                         _start_recording(continuing=False)
+
+                    def on_live():
+                        _start_recording(continuing=False, mode='live')
 
                     def on_no():
                         _popup_active[0] = False
                         detector.set_declined()
                         log.info("Usuario rechazó grabar")
 
-                    RecordingPopup(on_yes=on_yes, on_no=on_no).show()
+                    RecordingPopup(on_yes=on_yes, on_no=on_no, on_alt=on_live).show()
 
             except Exception as e:
                 _popup_active[0] = False

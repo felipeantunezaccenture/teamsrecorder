@@ -6,9 +6,9 @@ from tk_thread import get_root, run_in_tk
 
 _STR = {
     'es': dict(title='Reunion de Teams detectada', subtitle='Quieres grabar el audio?',
-               yes='  Grabar  ', no='No grabar'),
+               yes='  Grabar  ', alt='Grabar + en vivo', no='No grabar'),
     'en': dict(title='Teams meeting detected', subtitle='Do you want to record the audio?',
-               yes='  Record  ', no="Don't record"),
+               yes='  Record  ', alt='Record + live', no="Don't record"),
 }
 
 BG_DARK  = '#1e1e2e'
@@ -16,15 +16,24 @@ FG_TITLE = '#cdd6f4'
 FG_SUB   = '#a6adc8'
 FG_MUTED = '#6c7086'
 BTN_YES  = '#89b4fa'
+BTN_ALT  = '#a6e3a1'
 BTN_NO   = '#45475a'
 BORDER   = '#585b70'
 
 
 class RecordingPopup:
+    """Aviso de reunion detectada. Sin respuesta en `timeout` segundos cuenta
+    como "No" (decision de Felipe, 19/10/2026: con clientes hace falta su
+    permiso para grabar). on_alt, si se da, añade un tercer boton: grabar con el
+    transcript en vivo."""
+
     def __init__(self, on_yes=None, on_no=None, timeout=POPUP_TIMEOUT,
-                 title=None, subtitle=None, yes_label=None, no_label=None):
+                 title=None, subtitle=None, yes_label=None, no_label=None,
+                 on_alt=None, alt_label=None):
         self._on_yes = on_yes
         self._on_no  = on_no
+        self._on_alt = on_alt
+        self._alt_label = alt_label
         self._timeout = timeout
         self._answered = False
         self._top: tk.Toplevel | None = None
@@ -44,6 +53,7 @@ class RecordingPopup:
         if self._subtitle is not None:  s['subtitle'] = self._subtitle
         if self._yes_label is not None: s['yes'] = self._yes_label
         if self._no_label is not None:  s['no'] = self._no_label
+        if self._alt_label is not None: s['alt'] = self._alt_label
         root = get_root()
 
         top = tk.Toplevel(root)
@@ -52,7 +62,8 @@ class RecordingPopup:
         top.attributes('-alpha', 0.96)
         top.lift()
 
-        W, H = 340, 118
+        # Con el tercer boton y la cuenta atras no caben en 340.
+        W, H = (430 if self._on_alt else 340), 118
         sw = top.winfo_screenwidth()
         sh = top.winfo_screenheight()
         top.geometry(f"{W}x{H}+{sw - W - 20}+{sh - H - 64}")
@@ -72,6 +83,11 @@ class RecordingPopup:
         tk.Button(btn_frame, text=s['yes'], font=('Segoe UI', 9, 'bold'),
                   bg=BTN_YES, fg=BG_DARK, relief='flat', cursor='hand2',
                   command=self._yes).pack(side='left', padx=(0, 8))
+
+        if self._on_alt:
+            tk.Button(btn_frame, text=s['alt'], font=('Segoe UI', 9, 'bold'),
+                      bg=BTN_ALT, fg=BG_DARK, relief='flat', cursor='hand2',
+                      command=self._alt).pack(side='left', padx=(0, 8))
 
         tk.Button(btn_frame, text=s['no'], font=('Segoe UI', 9),
                   bg=BTN_NO, fg=FG_TITLE, relief='flat', cursor='hand2',
@@ -104,6 +120,14 @@ class RecordingPopup:
         self._close()
         if self._on_yes:
             threading.Thread(target=self._on_yes, daemon=True, name='PopupYes').start()
+
+    def _alt(self):
+        if self._answered:
+            return
+        self._answered = True
+        self._close()
+        if self._on_alt:
+            threading.Thread(target=self._on_alt, daemon=True, name='PopupAlt').start()
 
     def _no(self):
         if self._answered:

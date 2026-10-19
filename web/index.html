@@ -388,6 +388,20 @@
   </div>
 </div>
 
+<!-- Modal: transcript en vivo de la grabación en curso -->
+<div class="modal-overlay hidden" id="live-modal">
+  <div class="modal-box live-modal-box">
+    <div class="modal-title" data-i18n="live_title">Transcript en vivo</div>
+    <div class="modal-field">
+      <div id="live-modal-status" class="live-status"></div>
+      <div id="live-modal-lines" class="live-transcript"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeLiveModal()" data-i18n="live_close">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <div class="view hidden" id="view-settings">
 
   <div class="settings-view">
@@ -482,6 +496,26 @@
 
           </select>
 
+        </div>
+
+        <!-- Transcripción en vivo -->
+        <div class="settings-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;">
+            <div class="settings-card-title" data-i18n="live_setting_label">Transcribir durante la reunión</div>
+            <label class="pill-toggle" id="toggle-background">
+              <input type="checkbox" id="background-enabled" onchange="saveBackgroundEnabled(this.checked)">
+              <span class="pill-toggle-track"></span>
+            </label>
+          </div>
+          <div class="settings-card-desc" data-i18n="live_setting_desc">Mientras grabas, se va transcribiendo para que al colgar quede poco.</div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin:14px 0 5px;">
+            <div class="settings-card-title" data-i18n="live_final_label">En modo en vivo, guardar el transcript en vivo como definitivo</div>
+            <label class="pill-toggle" id="toggle-live-final">
+              <input type="checkbox" id="live-final-enabled" onchange="saveLiveFinalEnabled(this.checked)">
+              <span class="pill-toggle-track"></span>
+            </label>
+          </div>
+          <div class="settings-card-desc" data-i18n="live_final_desc">Más rápido, menos preciso.</div>
         </div>
 
 
@@ -1161,4 +1195,3 @@
 </body>
 
 </html>
-

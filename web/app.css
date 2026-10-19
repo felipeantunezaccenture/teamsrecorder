@@ -1525,6 +1525,15 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
+/* Transcript en vivo */
+.live-modal-box { width: min(760px, 92vw); }
+.live-status { font-size: 12px; color: var(--muted); }
+.live-status:empty { display: none; }
+.live-transcript { max-height: 60vh; overflow-y: auto; font-size: 13px; line-height: 1.55; color: var(--text); }
+.live-line { padding: 2px 0; }
+.live-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pipeline-job-live { margin-left: 6px; padding: 1px 8px; font-size: 11px; }
+
 .btn.icon-btn { display: inline-flex; align-items: center; gap: 5px; }
 
 /* Picker Terminal / App del botón Claude */

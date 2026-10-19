@@ -197,6 +197,30 @@ def tr_dirs(tmp_path, monkeypatch):
     return root
 
 
+# El spawn de verdad, para los tests que lo prueban a el.
+import live_transcriber as _live_mod  # noqa: E402
+
+REAL_LIVE_SPAWN = _live_mod.spawn
+
+
+@pytest.fixture(autouse=True)
+def live_spawns(monkeypatch):
+    """Ningun test lanza el proceso en vivo de verdad.
+
+    set_recording(True) lo lanza en un hilo (tray_app._start_live): sin esto,
+    cualquier test que simule el inicio de una grabacion arrancaria un proceso
+    que carga Whisper. Devuelve la lista de rutas con las que se pidio lanzar.
+    """
+    calls = []
+
+    def fake_spawn(wav, recorder=None, still_wanted=None, **_kwargs):
+        calls.append(wav)
+        return None
+
+    monkeypatch.setattr(_live_mod, 'spawn', fake_spawn)
+    return calls
+
+
 @pytest.fixture
 def tray_factory(tr_dirs):
     """Fabrica TrayApp SIN pasar por __init__, para no arrancar los tres hilos.
@@ -231,6 +255,15 @@ def tray_factory(tr_dirs):
         app._cancel_lock = threading.Lock()
         app._mic_state = None
         app._icon_base = (tray_app._ICON_IDLE, 'Noted')
+        app._live = {}
+        app._live_lock = threading.Lock()
+        app._live_spawning = set()
+        app._rec_mode = None
+        app.last_recording_mode = None
+        app._whisper_busy = False
+        app._whisper_lock = threading.Lock()
+        app._ctl_lock = threading.RLock()
+        app._yield_seq = 0
         return app
 
     return make

@@ -314,7 +314,8 @@ class AppAPI:
 
     def download_pdf(self, md_path: str) -> dict:
         """Genera PDF con Edge headless, pregunta dónde guardarlo y abre la carpeta."""
-        import shutil, tempfile
+        import shutil
+        import tempfile
         md   = Path(md_path)
         html = md.with_suffix('.html')
         if not html.exists():
@@ -3349,6 +3350,36 @@ class AppAPI:
 
             return ''
 
+    def get_live_transcript(self, stem: str) -> dict:
+        """Transcript en vivo de la grabacion en curso (live_transcriber.py).
+
+        El stem llega del job 'recording' de .pipeline_status.json ('live_stem').
+        """
+        empty = {'lines': [], 'state': None, 'lang': None, 'mode': None}
+        try:
+            from config import RECORDINGS_DIR
+            import live_transcriber
+            if not stem or Path(stem).name != stem:
+                return empty
+            return live_transcriber.live_view(RECORDINGS_DIR / f'{stem}.wav')
+        except Exception as e:
+            log.warning(f"get_live_transcript: {e}")
+            return empty
+
+    def switch_live(self, stem: str) -> bool:
+        """Pide al daemon pasar la grabacion en curso a transcript en vivo. Va por
+        .cli_command, el canal que ya usa la CLI; el daemon comprueba que el stem
+        es el de la grabacion actual (main._start_cli_listener)."""
+        try:
+            from config import CLI_CONTROL_FILE
+            if not stem or Path(stem).name != stem or any(c.isspace() for c in stem):
+                return False
+            CLI_CONTROL_FILE.write_text(f'live {stem}', encoding='utf-8')
+            return True
+        except Exception as e:
+            log.warning(f"switch_live: {e}")
+            return False
+
 
 
     def get_stickies(self, path: str) -> list:
@@ -4378,4 +4409,3 @@ if __name__ == '__main__':
     _initial = sys.argv[1] if len(sys.argv) > 1 else None
 
     _run_window(_initial)
-

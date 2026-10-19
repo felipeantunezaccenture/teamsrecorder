@@ -47,6 +47,8 @@ def _remove_cancel_signal(stem: str) -> None:
 _STR = {
     'es': dict(
         record_now='Grabar ahora', stop='Parar grabacion',
+        record_now_live='Grabar ahora (transcript en vivo)',
+        switch_live='Activar transcript en vivo',
         add_context='Añadir contexto a grabacion',
         cancel_recording='Cancelar grabacion (sin guardar)',
         view_minutes='Abrir la aplicacion',
@@ -74,6 +76,8 @@ _STR = {
     ),
     'en': dict(
         record_now='Record now', stop='Stop recording',
+        record_now_live='Record now (live transcript)',
+        switch_live='Turn on live transcript',
         add_context='Add context to recording',
         cancel_recording='Cancel recording (discard)',
         view_minutes='Open the app',
@@ -168,6 +172,27 @@ class TrayApp:
         self._mic_state: mic_status.MicState | None = None
         self._icon_base = (_ICON_IDLE, 'Noted')
 
+        # Transcripcion en vivo (live_transcriber.py): stem -> (Popen, ruta del WAV)
+        # del proceso que transcribe la grabacion en curso. Solo vive mientras se
+        # graba; al parar se mata y el pipeline cierra el transcript.
+        self._live: dict = {}
+        self._live_lock = threading.Lock()
+        self._live_spawning: set = set()
+        # Modo de la grabacion en curso: 'background' (transcribe durante la
+        # reunion con el modelo de siempre, para ir ganando tiempo) o 'live'
+        # ('small', para verlo ya). Y el arbitro de Whisper: mientras el pipeline
+        # lo usa, el proceso de fondo cede el modelo (nunca dos grandes a la vez);
+        # en modo live es el pipeline el que se pausa.
+        self._rec_mode: str | None = None
+        self.last_recording_mode: str | None = None
+        self._whisper_busy = False
+        self._whisper_lock = threading.Lock()
+        # El .ctl lo escriben tres hilos (grabacion, pipeline, panel): siempre
+        # entero y desde el estado actual, de uno en uno. _yield_seq numera cada
+        # peticion de ceder, para no fiarse de un 'yielded' de la anterior.
+        self._ctl_lock = threading.RLock()
+        self._yield_seq = 0
+
         threading.Thread(target=self._pipeline_loop, daemon=True, name='PipelineWorker').start()
         threading.Thread(target=self._mic_poller, daemon=True, name='MicStatusPoller').start()
         threading.Thread(target=self._recover_pending, daemon=True, name='PipelineRecovery').start()
@@ -185,6 +210,11 @@ class TrayApp:
             menu=pystray.Menu(
                 pystray.MenuItem(lambda _: s['stop'] if self._recorder.is_recording else s['record_now'],
                                  self._toggle_recording),
+                pystray.MenuItem(s['record_now_live'], self._record_now_live,
+                                 visible=lambda _: not self._recorder.is_recording),
+                pystray.MenuItem(s['switch_live'], self._switch_live_from_menu,
+                                 visible=lambda _: bool(self._recorder.is_recording
+                                                        and self._rec_mode != 'live')),
                 pystray.MenuItem(s['add_context'],
                                  self._add_context,
                                  visible=lambda _: bool(self._recorder.is_recording)),
@@ -209,14 +239,24 @@ class TrayApp:
         import re as _re
         from config import PROJECT_DIR
         jobs = []
+        # Una sola lectura: set_recording(False) la pone a None desde otro hilo, y
+        # leerla dos veces podia dar AttributeError a mitad de esta funcion.
+        rec_path = self._recording_path
         if self._recording_start:
             elapsed = int(time.time() - self._recording_start)
             m, s = divmod(elapsed, 60)
-            _rm = _re.match(r'\d{4}-\d{2}-\d{2}_(\d{2})-(\d{2})(?:_(.+))?', self._recording_path.stem) if self._recording_path else None
+            _rm = _re.match(r'\d{4}-\d{2}-\d{2}_(\d{2})-(\d{2})(?:_(.+))?', rec_path.stem) if rec_path else None
             _rtitle = _rm.group(3).replace('_', ' ').title() if (_rm and _rm.group(3)) else None
             _rtime  = f"{_rm.group(1)}:{_rm.group(2)}" if _rm else None
             jobs.append({'stage': 'recording', 'label': f'Recording {m:02d}:{s:02d}', 'elapsed': elapsed, 'pct': None,
                          'title': _rtitle, 'time': _rtime, 'step': 0, 'total_steps': 3, 'step_label': 'Grabando'})
+            # 'live_stem' y no 'stem': 'stem' es lo que habilita el boton de
+            # descartar, y una grabacion en curso no se descarta desde ahi.
+            if rec_path:
+                jobs[-1]['mode'] = self._rec_mode
+                jobs[-1]['rec_stem'] = rec_path.stem
+                if rec_path.stem in self._live:
+                    jobs[-1]['live_stem'] = rec_path.stem
         if self._processing_msg:
             pct_m = _re.search(r'(\d+)%', self._processing_msg)
             job = {'stage': 'processing', 'label': self._processing_msg, 'pct': int(pct_m.group(1)) if pct_m else None}
@@ -229,16 +269,22 @@ class TrayApp:
         except Exception:
             pass
 
-    def set_recording(self, active: bool, path: Path = None):
+    def set_recording(self, active: bool, path: Path = None, mode: str = None):
         if active:
+            self._rec_mode = mode or 'background'
+            self.last_recording_mode = self._rec_mode
             self._recording_path = path
             self._recording_start = time.time()
             self._ticker_stop.clear()
             t = threading.Thread(target=self._ticker, daemon=True, name='TrayTicker')
             t.start()
             self._set_icon(_ICON_RECORDING, 'Noted - Recording 00:00')
+            self._write_live_ctl(path)
+            self._start_live(path, self._rec_mode)
         else:
             self._recording_path = None
+            self._rec_mode = None
+            self._stop_live()
             self._ticker_stop.set()
             self._recording_start = None
             if self._processing_msg:
@@ -251,6 +297,190 @@ class TrayApp:
                 self._icon.update_menu()
         except Exception:
             pass
+
+    def _start_live(self, path: Path, mode: str = 'background', mid_meeting: bool = False):
+        """Lanza la transcripcion durante la reunion (live_transcriber.py).
+
+        En un hilo y bajo try: si algo falla, la grabacion sigue igual y el
+        transcript se hace al terminar, como siempre.
+        """
+        try:
+            import live_transcriber
+            # Se resuelven aqui y no dentro del hilo: el hilo arranca despues, y
+            # en los tests el parche de spawn podria haberse deshecho ya.
+            spawn, kill = live_transcriber.spawn, live_transcriber.kill
+        except Exception as e:
+            log.warning(f"La transcripcion durante la reunion no arranco: {e}")
+            return
+        with self._live_lock:
+            if path.stem in self._live or path.stem in self._live_spawning:
+                return
+            self._live_spawning.add(path.stem)
+
+        def run():
+            try:
+                proc = spawn(path, self._recorder, still_wanted=lambda: self._recording_path == path,
+                             mode=mode, gate='yield' if self._whisper_busy else 'free',
+                             mid_meeting=mid_meeting)
+                if proc is None:
+                    return
+                with self._live_lock:
+                    # Si la grabacion paro mientras se lanzaba, _stop_live ya
+                    # paso por aqui sin verlo: se mata ahora.
+                    if self._recording_path == path:
+                        self._live[path.stem] = (proc, path)
+                        return
+                kill(proc, path)
+            except Exception as e:
+                log.warning(f"La transcripcion durante la reunion no arranco: {e}")
+            finally:
+                with self._live_lock:
+                    self._live_spawning.discard(path.stem)
+
+        threading.Thread(target=run, daemon=True, name='LiveSpawn').start()
+
+    def _write_live_ctl(self, path: Path) -> bool:
+        """Lo que el proceso de la reunion tiene que hacer: modo y si debe ceder
+        el modelo. Se escribe aunque el proceso aun no exista (se lanza a los
+        20 s): al arrancar, lo lee. Siempre entero y bajo el lock: dos hilos que
+        escribieran cada uno su campo podian dejar un modo y un permiso que ya no
+        son los de nadie."""
+        try:
+            import live_transcriber
+            with self._ctl_lock:
+                return live_transcriber.write_ctl(
+                    path, mode=self._rec_mode or 'background',
+                    gate='yield' if self._whisper_busy else 'free', yield_id=self._yield_seq)
+        except Exception as e:
+            log.warning(f"No se pudo escribir el control de la transcripcion en vivo: {e}")
+            return False
+
+    def switch_to_live(self, stem: str | None = None) -> bool:
+        """Pasa la grabacion en curso a modo en vivo ('small', ya). Si se indica
+        stem (el panel, por .cli_command), tiene que ser el de esta grabacion."""
+        # Bajo el lock del .ctl, y _claim_whisper tambien mira el modo bajo el:
+        # si no, un 'live' que luego se deshace le haria saltarse el ceder, y
+        # habria dos 'medium' a la vez.
+        with self._ctl_lock:
+            path = self._recording_path
+            if path is None or (stem and path.stem != stem) or self._rec_mode == 'live':
+                return False
+            prev_mode = self._rec_mode
+            self._rec_mode = 'live'
+            if not self._write_live_ctl(path):
+                # El proceso no se enteraria: el pipeline se pausaria esperando un
+                # en vivo que no llega. Mejor decir que no se pudo.
+                self._rec_mode = prev_mode
+                log.warning(f"No se pudo activar el en vivo de {path.name}")
+                return False
+        self.last_recording_mode = 'live'
+        # Sin proceso (fondo desactivado o retirado), se lanza uno en vivo, ya.
+        self._start_live(path, 'live', mid_meeting=True)
+        log.info(f"Transcripcion en vivo activada a mitad de la grabacion: {path.name}")
+        self._write_status()
+        try:
+            if self._icon:
+                self._icon.update_menu()
+        except Exception:
+            pass
+        return True
+
+    def _switch_live_from_menu(self):
+        self.switch_to_live()
+
+    def _live_priority(self) -> bool:
+        """El modo en vivo tiene prioridad: mientras dure, el pipeline se pausa.
+        Deja de pausarse si el proceso en vivo fallo, termino o espera memoria:
+        si no, los dos se quedarian esperando."""
+        path = self._recording_path
+        if path is None or self._rec_mode != 'live':
+            return False
+        entry = self._live.get(path.stem)
+        if entry is None:
+            # Aun lanzandose: la pausa empieza cuando se elige, no 20 s despues.
+            return path.stem in self._live_spawning
+        try:
+            import live_transcriber
+            return live_transcriber.child_usable(path, entry[0])
+        except Exception:
+            return False
+
+    def _claim_whisper(self):
+        """El pipeline va a usar Whisper. Si la reunion en curso se transcribe de
+        fondo, su proceso suelta el modelo antes: nunca dos modelos grandes a la
+        vez, que es lo que ya tumbo la app con poca memoria. En modo en vivo no
+        cede nadie: el pipeline se pausa (_live_priority)."""
+        with self._whisper_lock:
+            self._whisper_busy = True
+            self._yield_seq += 1
+            yield_id = self._yield_seq
+        with self._ctl_lock:
+            path = self._recording_path
+            if path is None or self._rec_mode == 'live':
+                return
+            self._write_live_ctl(path)
+        try:
+            import live_transcriber
+            entry = self._live.get(path.stem)
+            if entry is None:
+                return
+            # Deja de esperar si el usuario pasa a en vivo mientras tanto: ese
+            # proceso ya no va a ceder (el pipeline se pausara) y no hay que matarlo.
+            # Si la grabacion para, se sigue esperando a que ceda o muera (lo mata
+            # _stop_live en otro hilo): no basta con que haya parado.
+            ok = live_transcriber.wait_yielded(
+                path, entry[0], timeout=60, yield_id=yield_id,
+                should_stop=lambda: self._rec_mode == 'live')
+            if not ok and self._rec_mode != 'live' and self._recording_path == path:
+                log.warning(f"La transcripcion de fondo de {path.name} no solto el modelo; se para")
+                with self._live_lock:
+                    self._live.pop(path.stem, None)
+                live_transcriber.kill(entry[0], path)
+        except Exception as e:
+            log.warning(f"_claim_whisper: {e}")
+
+    def _release_whisper(self):
+        """Fin de un trabajo del pipeline. El modelo vuelve al proceso de fondo
+        solo cuando no queda nada en cola: la reunion mas antigua termina primero."""
+        if not self._pipeline_queue.empty():
+            return
+        with self._whisper_lock:
+            if not self._whisper_busy:
+                return
+            self._whisper_busy = False
+        path = self._recording_path
+        if path is not None:
+            self._write_live_ctl(path)
+
+    def _stop_live(self, wait: bool = False):
+        """Mata el proceso en vivo. Todos los caminos que paran una grabacion
+        pasan por set_recording(False), y por eso se hace ahi.
+
+        Por defecto en un hilo: matarlo suele ser instantaneo, pero un proceso
+        recien nacido puede negar el acceso unos segundos, y set_recording no
+        debe quedarse esperando con el estado a medio cambiar (una reconexion
+        rapida mostraria la nueva grabacion como parada). finish_live lo vuelve a
+        matar, esperando, antes de tocar las pistas. wait=True es para cancelar,
+        que necesita el proceso muerto antes de borrar lo que dejo.
+        """
+        with self._live_lock:
+            running = list(self._live.values())
+            self._live.clear()
+        if not running:
+            return
+
+        def stop():
+            for proc, path in running:
+                try:
+                    import live_transcriber
+                    live_transcriber.kill(proc, path)
+                except Exception as e:
+                    log.warning(f"No se pudo parar la transcripcion en vivo de {path.name}: {e}")
+
+        if wait:
+            stop()
+        else:
+            threading.Thread(target=stop, daemon=True, name='LiveStop').start()
 
     def set_processing(self, msg: str = ''):
         self._processing_msg = msg
@@ -548,6 +778,8 @@ class TrayApp:
             except Exception as e:
                 log.error(f"Pipeline error: {e}", exc_info=True)
                 self.set_processing('')
+            finally:
+                self._release_whisper()
 
     def _run_pipeline_sync(self, wav_path: Path):
         from storage import get_transcript_path
@@ -569,6 +801,9 @@ class TrayApp:
                              'step_started': time.time()}
 
         lang_path = transcript_path.with_suffix('.lang')
+        if not transcript_path.exists():
+            self._claim_whisper()
+            self._use_live_transcript(wav_path, transcript_path, lang_path)
         if transcript_path.exists():
             transcript_text = transcript_path.read_text(encoding='utf-8')
             if lang_path.exists():
@@ -598,7 +833,7 @@ class TrayApp:
 
             result = transcribe(wav_path, on_progress=on_progress, on_segment=on_seg,
                                 should_cancel=lambda: self._is_cancelled(wav_path.stem),
-                                resume_from=partial_path)
+                                resume_from=partial_path, should_pause=self._live_priority)
             if partial_path.exists():
                 partial_path.unlink()
 
@@ -631,12 +866,78 @@ class TrayApp:
                 # maquina donde quedarse sin memoria es lo que tumba el worker
                 # del loopback y hace perder las voces de los demas.
                 self._move_to_processed(wav_path, transcript_path)
+                self._discard_live_files(wav_path)
                 self.set_processing('')
                 return
 
             transcript_path.write_text(transcript_text, encoding='utf-8')
 
+        self._discard_live_files(wav_path)
         self._register_part(wav_path, transcript_text, detected_language)
+
+    def _use_live_transcript(self, wav_path: Path, transcript_path: Path, lang_path: Path):
+        """Cierra el transcript con lo hecho durante la reunion y lo deja donde
+        _run_pipeline_sync busca uno ya hecho (live_transcriber.finish_live).
+
+        Aprovecha solo los trozos hechos con el modelo de siempre (el modo de
+        fondo), y tambien los de 'small' si "live_transcript_final" esta activado;
+        lo que falte lo transcribe ahora. Sin nada aprovechable, o ante cualquier
+        problema, no deja nada escrito y el pipeline transcribe como siempre. Solo
+        la cancelacion se propaga: es el usuario descartando la reunion.
+        """
+        tmp = transcript_path.with_name(transcript_path.name + '.tmp')
+        try:
+            import live_transcriber
+            if not live_transcriber.jsonl_path(wav_path).exists():
+                return
+        except Exception as e:
+            log.warning(f"Transcript en vivo no utilizable para {wav_path.name} ({e})")
+            return
+        try:
+            self.set_processing('Transcribiendo...')
+            result = live_transcriber.finish_live(
+                wav_path,
+                on_progress=lambda pct: self.set_processing(f'Transcribiendo {pct}%...'),
+                should_cancel=lambda: self._is_cancelled(wav_path.stem),
+                should_pause=self._live_priority)
+            text, lang = result if result is not None else ('', '')
+            if result is not None and not text.strip():
+                # Sin voz: que lo confirme el camino de siempre, que es el que
+                # sabe tratar una grabacion vacia.
+                log.info(f"En vivo no se encontro voz en {wav_path.name}: "
+                         f"se comprueba con la transcripcion de siempre")
+            if text.strip():
+                lang_path.write_text(lang)
+                # Atomico: un transcript a medias en disco se tomaria por bueno.
+                tmp.write_text(text, encoding='utf-8')
+                tmp.replace(transcript_path)
+                log.info(f"Transcript en vivo cerrado: {wav_path.name} "
+                         f"({len(text.splitlines())} lineas, idioma {lang})")
+                live_transcriber.discard_artifacts(wav_path, parts=True)
+            # Si no, camino de siempre. Los ficheros en vivo se quitan cuando ese
+            # termine bien (_discard_live_files): si fallara, serian el unico
+            # texto de la reunion.
+        except _Cancelled:
+            raise
+        except Exception as e:
+            log.warning(f"Transcript en vivo no utilizable para {wav_path.name} ({e}): "
+                        f"se transcribe como siempre", exc_info=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _discard_live_files(self, wav_path: Path):
+        """El transcript que se guarda ya esta hecho: lo que se escribio en vivo
+        (live_transcriber.py) era para verlo durante la reunion y no debe
+        quedarse en recordings/. Si la transcripcion falla no se llega aqui y se
+        conserva: es el unico texto de esa reunion. Las pistas no se tocan, las
+        gestiona el transcriptor."""
+        try:
+            import live_transcriber
+            live_transcriber.discard_artifacts(wav_path, tracks=False, parts=True)
+        except Exception as e:
+            log.warning(f"No se pudieron borrar los ficheros en vivo de {wav_path.name}: {e}")
 
     # ── Sesión de reunión ─────────────────────────────────────────────────────
 
@@ -994,11 +1295,15 @@ class TrayApp:
         time.sleep(3)
         pending = []
         for wav in RECORDINGS_DIR.glob('*.wav'):
-            # <grab>.mic.wav / <grab>.loop.wav son las pistas para diarizar, no
-            # grabaciones: encolarlas triplicaba el trabajo y generaba minutas
-            # de una sola pista.
-            if wav.stem.endswith(('.mic', '.loop')):
-                continue
+            # Las pistas .mic.wav / .loop.wav acompañan a una grabacion: no son
+            # reuniones. Encolarlas daba minutas fantasma (las del 15/10 15:17
+            # salieron tres veces: .wav, .mic.wav y .loop.wav por separado). Se
+            # reconocen por su grabacion principal, no solo por el nombre: un
+            # titulo puede acabar en ".mic" y esa si es una reunion.
+            if wav.name.endswith(('.mic.wav', '.loop.wav')):
+                base = wav.name.rsplit('.', 2)[0] + '.wav'
+                if (RECORDINGS_DIR / base).exists() or (RECORDINGS_DIR / 'processed' / base).exists():
+                    continue
             stem_ts = wav.stem[:16]
             ts_compact = stem_ts[:4] + stem_ts[5:7] + stem_ts[8:10] + '_' + stem_ts[11:13] + stem_ts[14:16]
             has_minutes = any(MINUTES_DIR.glob(f"{ts_compact}_*.md"))
@@ -1017,19 +1322,30 @@ class TrayApp:
             self._recorder.stop()
             self.set_recording(False)
         else:
-            from storage import get_recording_path
-            path = get_recording_path('manual')
-            # on_recording_stopped se asigna una sola vez al inicio (en main.py)
-            self._recorder.start(path)
-            self.set_recording(True, path)
-            threading.Thread(target=self.warn_if_mic_muted, daemon=True, name='MicMuteCheck').start()
-            def _send_notice():
-                try:
-                    import teams_chat as _tc
-                    _tc.send_recording_notice()
-                except Exception as _e:
-                    log.warning(f"TeamsChatNotice: {_e}")
-            threading.Thread(target=_send_notice, daemon=True, name='TeamsChatNotice').start()
+            self._start_manual('background')
+
+    def _record_now_live(self):
+        """'Grabar ahora (en vivo)': como 'Grabar ahora', pero con el transcript ya.
+        Metodo propio y sin argumentos: pystray decide que pasarle a cada accion
+        por su numero de parametros."""
+        if not self._recorder.is_recording:
+            self._start_manual('live')
+
+    def _start_manual(self, mode: str):
+        from storage import get_recording_path
+        path = get_recording_path('manual')
+        # on_recording_stopped se asigna una sola vez al inicio (en main.py)
+        self._recorder.start(path)
+        self.set_recording(True, path, mode=mode)
+        threading.Thread(target=self.warn_if_mic_muted, daemon=True, name='MicMuteCheck').start()
+
+        def _send_notice():
+            try:
+                import teams_chat as _tc
+                _tc.send_recording_notice()
+            except Exception as _e:
+                log.warning(f"TeamsChatNotice: {_e}")
+        threading.Thread(target=_send_notice, daemon=True, name='TeamsChatNotice').start()
 
     def _active_job_stem(self) -> str:
         """Trabajo que se puede descartar ahora: el que se procesa, o el primero
@@ -1043,7 +1359,19 @@ class TrayApp:
         # Mientras graba, se descarta el audio sin guardar. Una vez parada, lo
         # que queda por descartar es el trabajo del pipeline.
         if self._recorder.is_recording:
+            path = self._recording_path
+            # cancel() primero: es lo que deja sin efecto un stop() simultaneo.
+            # Despues el proceso en vivo, esperando a que muera, y se borra lo
+            # que dejo: su texto y los .part, por si el borrado de cancel()
+            # coincidio con una lectura suya. La reunion se descarto.
             self._recorder.cancel()
+            self._stop_live(wait=True)
+            if path is not None:
+                try:
+                    import live_transcriber
+                    live_transcriber.discard_artifacts(path, parts=True)
+                except Exception as e:
+                    log.warning(f"No se pudo limpiar la transcripcion en vivo descartada: {e}")
             self.set_recording(False)
             return
         stem = self._active_job_stem()

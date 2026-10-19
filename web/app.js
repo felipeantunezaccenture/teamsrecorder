@@ -256,6 +256,20 @@ const T = {
     semantic_open_inputs: 'Abrir carpeta de inputs',
     semantic_open_ontoforge: 'Abrir OntoForge',
     semantic_dialog_title: 'Generar capa semántica',
+    live_title: 'Transcript en vivo',
+    live_open: 'Ver en vivo',
+    live_close: 'Cerrar',
+    live_waiting: 'Esperando a que alguien hable… las primeras líneas tardan unos 40 s.',
+    live_failed: 'La transcripción en vivo se detuvo. El transcript completo se hará igual al terminar.',
+    live_open_bg: 'Ver transcript',
+    live_switch: 'Activar en vivo',
+    live_switch_sent: 'Activando el transcript en vivo…',
+    live_switch_failed: 'No se pudo activar el transcript en vivo',
+    live_bg_hint: 'Se transcribe en segundo plano con el modelo completo, así que va con retraso. Para verlo al momento, pulsa «Activar en vivo».',
+    live_setting_label: 'Transcribir durante la reunión',
+    live_setting_desc: 'Mientras grabas, se va transcribiendo con el modelo de arriba, sin prisa y sin quitarle recursos a Teams: al colgar queda poco por hacer. Para verlo al momento, elige «Grabar + en vivo» al empezar o «Activar en vivo» durante la grabación. Se aplica desde la siguiente grabación.',
+    live_final_label: 'En modo en vivo, guardar el transcript en vivo como definitivo',
+    live_final_desc: 'El transcript queda listo segundos después de colgar, pero con la calidad del modelo rápido (small): falla más, sobre todo en términos en inglés. Apagado, lo que se hizo en vivo se rehace con el modelo de arriba.',
     semantic_dialog_msg: 'Voy a usar la skill de <span style="color:var(--accent);font-weight:600">captura de conocimiento</span> para crear tu CSV de entrada de la capa semántica para OntoForge.<br><br>¿Quieres incluir otros documentos además de la transcripción?',
     semantic_dialog_browse: 'Añadir documentos…',
     semantic_dialog_none: 'Si no, solo se usará la transcripción de la reunión.',
@@ -629,6 +643,20 @@ const T = {
     semantic_open_inputs: 'Open inputs folder',
     semantic_open_ontoforge: 'Open OntoForge',
     semantic_dialog_title: 'Generate semantic layer',
+    live_title: 'Live transcript',
+    live_open: 'View live',
+    live_close: 'Close',
+    live_waiting: 'Waiting for someone to speak… the first lines take about 40 s.',
+    live_failed: 'Live transcription stopped. The full transcript will still be made when the recording ends.',
+    live_open_bg: 'View transcript',
+    live_switch: 'Go live',
+    live_switch_sent: 'Turning on the live transcript…',
+    live_switch_failed: 'Could not turn on the live transcript',
+    live_bg_hint: 'It is being transcribed in the background with the full model, so it lags behind. To see it as it happens, press “Go live”.',
+    live_setting_label: 'Transcribe during the meeting',
+    live_setting_desc: 'While recording, the meeting is transcribed with the model above, unhurried and without taking resources from Teams, so little is left after the call. To see it as it happens, choose “Record + live” at the start or “Go live” during the recording. Applies from the next recording.',
+    live_final_label: 'In live mode, save the live transcript as the final one',
+    live_final_desc: 'The transcript is ready seconds after hanging up, but with the faster model’s quality (small): more mistakes, especially on English terms. When off, what was done live is redone with the model above.',
     semantic_dialog_msg: 'I\'ll use the <span style="color:var(--accent);font-weight:600">knowledge-capture</span> skill to create your semantic layer CSV input for OntoForge.<br><br>Would you like to include any documents besides the transcript?',
     semantic_dialog_browse: 'Add documents…',
     semantic_dialog_none: 'If not, only the meeting transcript will be used.',
@@ -1001,6 +1029,20 @@ const T = {
     semantic_open_inputs: 'Obrir carpeta d\'inputs',
     semantic_open_ontoforge: 'Obrir OntoForge',
     semantic_dialog_title: 'Generar la capa semàntica',
+    live_title: 'Transcripció en directe',
+    live_open: 'Veure en directe',
+    live_close: 'Tanca',
+    live_waiting: 'Esperant que algú parli… les primeres línies triguen uns 40 s.',
+    live_failed: 'La transcripció en directe s\'ha aturat. El transcript complet es farà igualment en acabar.',
+    live_open_bg: 'Veure el transcript',
+    live_switch: 'Activar en directe',
+    live_switch_sent: 'Activant el transcript en directe…',
+    live_switch_failed: 'No s\'ha pogut activar el transcript en directe',
+    live_bg_hint: 'Es transcriu en segon pla amb el model complet, així que va amb retard. Per veure-ho al moment, prem «Activar en directe».',
+    live_setting_label: 'Transcriure durant la reunió',
+    live_setting_desc: 'Mentre graves, es va transcrivint amb el model de dalt, sense pressa i sense treure recursos a Teams: en penjar queda poca feina. Per veure-ho al moment, tria «Gravar + en directe» en començar o «Activar en directe» durant la gravació. S\'aplica des de la gravació següent.',
+    live_final_label: 'En mode en directe, desar el transcript en directe com a definitiu',
+    live_final_desc: 'El transcript queda llest uns segons després de penjar, però amb la qualitat del model ràpid (small): s\'equivoca més, sobretot en termes en anglès. Desactivat, el que es va fer en directe es refà amb el model de dalt.',
     semantic_dialog_msg: 'Faré servir la skill de <span style="color:var(--accent);font-weight:600">captura de coneixement</span> per crear el teu CSV d\'entrada de la capa semàntica per a OntoForge.<br><br>Vols incloure altres documents a més de la transcripció?',
     semantic_dialog_browse: 'Afegir documents…',
     semantic_dialog_none: 'Si no, només s\'utilitzarà la transcripció de la reunió.',
@@ -3848,9 +3890,24 @@ async function loadRecordingSettings() {
       ta.value = s.teams_chat_message ?? '';
       ta.disabled = !enabled;
     }
+    // Mismos valores por defecto que live_transcriber.background_enabled()/final_enabled().
+    const bgCb = document.getElementById('background-enabled');
+    const finalCb = document.getElementById('live-final-enabled');
+    if (bgCb) bgCb.checked = s.background_transcription !== false;
+    if (finalCb) finalCb.checked = s.live_transcript_final === true;
   } catch (e) {
     renderWhisperOptions('medium');
   }
+}
+
+async function saveBackgroundEnabled(enabled) {
+  await pywebview.api.save_settings({ background_transcription: enabled });
+  showToast(t('settings_saved'));
+}
+
+async function saveLiveFinalEnabled(enabled) {
+  await pywebview.api.save_settings({ live_transcript_final: enabled });
+  showToast(t('settings_saved'));
 }
 
 async function saveCoachingEnabled(enabled) {
@@ -5598,6 +5655,21 @@ async function updatePipelineFooter() {
                  onclick="cancelPipelineJob(decodeURIComponent('${encodeURIComponent(j.stem)}'))">×</button>`
       : '';
 
+    // Transcript durante la reunión (tray_app._write_status): "Ver" cuando hay
+    // proceso transcribiendo (live_stem), en los dos modos; "Activar en vivo"
+    // mientras la grabación va en modo de fondo.
+    let liveHtml = '';
+    if (j.stage === 'recording') {
+      if (j.live_stem) {
+        liveHtml += `<button class="btn btn-ghost btn-sm pipeline-job-live" data-stem="${escHtml(j.live_stem)}"
+                 onclick="openLiveModal(this.dataset.stem)">${escHtml(t(j.mode === 'live' ? 'live_open' : 'live_open_bg'))}</button>`;
+      }
+      if (j.mode && j.mode !== 'live' && j.rec_stem) {
+        liveHtml += `<button class="btn btn-ghost btn-sm pipeline-job-live" data-stem="${escHtml(j.rec_stem)}"
+                 onclick="switchLive(this.dataset.stem)">${escHtml(t('live_switch'))}</button>`;
+      }
+    }
+
     const isSemantic = j.kind === 'semantic';
     const isRegen    = j.kind === 'regen';
     const mainLine = isSemantic ? (L ? 'Export to Semantic Layer' : 'Exportar a Semantic Layer')
@@ -5618,6 +5690,7 @@ async function updatePipelineFooter() {
           ${timeText}
           ${elapsedHtml}
           ${cancelHtml}
+          ${liveHtml}
         </div>
         ${subLine}
         ${regenStageLine}
@@ -5625,6 +5698,63 @@ async function updatePipelineFooter() {
         ${progHtml}
       </div>`;
   }).join('');
+}
+
+// ── Transcript en vivo ────────────────────────────────────────────────────────
+
+let _liveStem = null;
+let _liveTimer = null;
+let _liveCount = 0;
+
+function openLiveModal(stem) {
+  _liveStem = stem;
+  _liveCount = 0;
+  document.getElementById('live-modal-lines').innerHTML = '';
+  document.getElementById('live-modal-status').textContent = t('live_waiting');
+  document.getElementById('live-modal').classList.remove('hidden');
+  clearInterval(_liveTimer);
+  _liveTimer = setInterval(refreshLiveModal, 2000);
+  refreshLiveModal();
+}
+
+async function switchLive(stem) {
+  let ok = false;
+  try { ok = await pywebview.api.switch_live(stem); } catch (_) {}
+  showToast(t(ok ? 'live_switch_sent' : 'live_switch_failed'));
+}
+
+function closeLiveModal() {
+  clearInterval(_liveTimer);
+  _liveTimer = null;
+  _liveStem = null;
+  document.getElementById('live-modal').classList.add('hidden');
+}
+
+async function refreshLiveModal() {
+  const stem = _liveStem;
+  if (!stem) return;
+  let data;
+  try { data = await pywebview.api.get_live_transcript(stem); } catch (_) { return; }
+  if (stem !== _liveStem) return;
+  const lines = data?.lines ?? [];
+  const statusEl = document.getElementById('live-modal-status');
+  statusEl.textContent = data?.state === 'failed' ? t('live_failed')
+                       : data?.mode === 'background' ? t('live_bg_hint')
+                       : (lines.length || _liveCount) ? '' : t('live_waiting');
+  // Al parar, el pipeline cierra el transcript y borra los ficheros en vivo:
+  // se deja a la vista lo último que llegó en vez de vaciar la ventana.
+  if (!lines.length || lines.length === _liveCount) return;
+  const box = document.getElementById('live-modal-lines');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.innerHTML = lines.map(l => {
+    const m = l.match(/^(\[\d+:\d{2}\])\s?(.*)$/);
+    return m
+      ? `<div class="live-line"><span class="live-time">${escHtml(m[1])}</span> ${escHtml(m[2])}</div>`
+      : `<div class="live-line">${escHtml(l)}</div>`;
+  }).join('');
+  _liveCount = lines.length;
+  // Solo se baja sola si ya estabas abajo: si subiste a releer algo, no te mueve.
+  if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
 function togglePipelinePanel() {

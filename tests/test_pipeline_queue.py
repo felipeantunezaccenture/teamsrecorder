@@ -341,7 +341,7 @@ class RecorderFalso:
 def test_grabar_ahora_arranca_con_el_nombre_manual(tray_factory, monkeypatch, tr_dirs):
     rec = RecorderFalso(grabando=False)
     app = tray_factory(recorder=rec)
-    monkeypatch.setattr(ta.TrayApp, 'set_recording', lambda self, a, p=None: None)
+    monkeypatch.setattr(ta.TrayApp, 'set_recording', lambda self, a, p=None, mode=None: None)
 
     app._toggle_recording()
 
