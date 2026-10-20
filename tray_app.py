@@ -1,3 +1,4 @@
+import glob
 import json
 import logging
 import queue
@@ -355,10 +356,13 @@ class TrayApp:
         try:
             trash_dir.mkdir(parents=True, exist_ok=True)
             candidates: list[Path] = []
+            # escape: _slugify conserva los corchetes, y "[EXT]" en el patron es
+            # una clase de caracteres que no casa con el nombre real.
+            pat = glob.escape(stem)
             for folder in (RECORDINGS_DIR, RECORDINGS_DIR / 'processed'):
                 if folder.exists():
-                    candidates.extend(folder.glob(f"{stem}.*"))
-                    candidates.extend(folder.glob(f"{stem}_transcript.*"))
+                    candidates.extend(folder.glob(f"{pat}.*"))
+                    candidates.extend(folder.glob(f"{pat}_transcript.*"))
             if minutes_path:
                 candidates += [
                     minutes_path,
@@ -897,7 +901,7 @@ class TrayApp:
                 continue
             stem_ts = wav.stem[:16]
             ts_compact = stem_ts[:4] + stem_ts[5:7] + stem_ts[8:10] + '_' + stem_ts[11:13] + stem_ts[14:16]
-            has_minutes = any(MINUTES_DIR.glob(f"{ts_compact}_*.md"))
+            has_minutes = any(MINUTES_DIR.glob(f"{glob.escape(ts_compact)}_*.md"))
             if not has_minutes:
                 pending.append(wav)
 

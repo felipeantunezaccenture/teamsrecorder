@@ -1,3 +1,5 @@
+import glob
+
 import json
 
 import logging
@@ -3339,7 +3341,7 @@ class AppAPI:
 
                         return candidate.read_text(encoding='utf-8')
 
-                for lang_candidate in folder.glob(f"{stem}*.txt"):
+                for lang_candidate in folder.glob(f"{glob.escape(stem)}*.txt"):
 
                     return lang_candidate.read_text(encoding='utf-8')
 
