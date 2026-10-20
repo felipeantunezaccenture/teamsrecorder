@@ -507,8 +507,7 @@ def test_un_error_inesperado_no_deja_el_trabajo_colgado(tray, cierre_aislado, tr
                                                         wav_factory, fake_outlook,
                                                         monkeypatch, caplog):
     """Sin nadie que la recoja, la excepcion dejaba el panel para siempre en
-    'Generando minutas' y no quedaba ni una linea en noted.log. El WAV se queda
-    en recordings/, para reintentarlo en el siguiente arranque."""
+    'Generando minutas' y no quedaba ni una linea en noted.log."""
     import minutes_generator
     a = wav_factory(ta.RECORDINGS_DIR / f'{STEM_A}.wav', seconds=0.1)
     mensajes = []
@@ -524,7 +523,7 @@ def test_un_error_inesperado_no_deja_el_trabajo_colgado(tray, cierre_aislado, tr
     assert tray._current_job == {}
     assert mensajes[-1] == ''
     assert 'el CLI de claude no responde' in caplog.text
-    assert a.exists()
+    caplog.clear()     # error provocado: que no lo cuente cierre_sin_errores_ocultos
 
 
 def test_si_las_minutas_no_se_guardan_se_conservan_wav_y_transcript(
@@ -537,7 +536,12 @@ def test_si_las_minutas_no_se_guardan_se_conservan_wav_y_transcript(
     import minutes_generator
     a = wav_factory(ta.RECORDINGS_DIR / f'{STEM_A}.wav', seconds=0.1)
     movidos, acciones, mensajes, avisos = [], [], [], []
-    monkeypatch.setattr(minutes_generator, 'save_minutes', lambda m, p: False)
+
+    def save_disco_lleno(minutes, output_path):
+        output_path.write_text('', encoding='utf-8')     # write_text ya habia truncado
+        return False
+
+    monkeypatch.setattr(minutes_generator, 'save_minutes', save_disco_lleno)
     monkeypatch.setattr(ta.TrayApp, '_move_to_processed', lambda self, w, t: movidos.append(w))
     monkeypatch.setattr(ta.TrayApp, 'set_processing', lambda self, m='': mensajes.append(m))
     monkeypatch.setattr(ta.TrayApp, '_notify', lambda self, t, m: avisos.append(t))
@@ -547,8 +551,27 @@ def test_si_las_minutas_no_se_guardan_se_conservan_wav_y_transcript(
 
     assert movidos == [], "el WAV se fue a processed/ sin minutas"
     assert (ta.RECORDINGS_DIR / f'{STEM_A}_transcript.txt').exists()
-    assert list(ta.MINUTES_DIR.iterdir()) == [], "transcript huerfano en minutes/"
+    assert list(ta.MINUTES_DIR.iterdir()) == [], \
+        "queda un .md a medias (_recover_pending lo daria por hecho) o un transcript huerfano"
     assert acciones == []
     assert 'Noted ⚠' in avisos
     assert tray._current_job == {}
     assert mensajes[-1] == ''
+
+
+def test_si_las_minutas_no_se_guardan_no_se_borra_una_que_ya_estaba(
+        tray, cierre_aislado, tr_dirs, wav_factory, fake_outlook, monkeypatch):
+    """Borrar la minuta a medias solo vale para la que creo este intento."""
+    import minutes_generator
+    import storage
+    a = wav_factory(ta.RECORDINGS_DIR / f'{STEM_A}.wav', seconds=0.1)
+    previa = storage.get_minutes_path(a, 'Comite Semanal')
+    previa.write_text('minutas de antes', encoding='utf-8')
+    intentos = []
+    monkeypatch.setattr(minutes_generator, 'save_minutes',
+                        lambda m, p: intentos.append(p) or False)
+
+    tray._finalize_session(_sesion(tray, [a], ['texto']))
+
+    assert intentos == [previa], "el test no apunta a la minuta que intenta guardar"
+    assert previa.read_text(encoding='utf-8') == 'minutas de antes'

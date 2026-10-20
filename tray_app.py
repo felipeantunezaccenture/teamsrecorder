@@ -742,6 +742,7 @@ class TrayApp:
 
         title, content = extract_title_from_minutes(raw)
         minutes_path = get_minutes_path(wav_path, title)
+        existed = minutes_path.exists()
         saved = save_minutes(content, minutes_path)
 
         # Si se descartó mientras Claude generaba, las minutas ya están en disco:
@@ -754,7 +755,15 @@ class TrayApp:
         # Sin .md la reunión no existe en el panel. El WAV y el transcript se
         # quedan en recordings/: _recover_pending la reencola en el siguiente
         # arranque y el pipeline reaprovecha el transcript, sin pasar por Whisper.
+        # write_text trunca antes de escribir: con el disco lleno deja un .md a
+        # medias, y _recover_pending lo daría por hecho. Solo se borra si lo
+        # creó este intento; uno que ya estaba no es suyo.
         if not saved:
+            if not existed:
+                try:
+                    minutes_path.unlink(missing_ok=True)
+                except OSError as e:
+                    log.warning(f"No se pudo borrar la minuta a medias {minutes_path.name}: {e}")
             self._notify('Noted ⚠', s['minutes_failed'])
             self._current_job = {}
             self.set_processing('')

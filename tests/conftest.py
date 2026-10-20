@@ -197,6 +197,22 @@ def tr_dirs(tmp_path, monkeypatch):
     return root
 
 
+@pytest.fixture(autouse=True)
+def cierre_sin_errores_ocultos(caplog):
+    """Un error dentro de _finalize_session vuelve a ser un fallo del test.
+
+    En la app, _finalize_session recoge cualquier excepcion de su cuerpo y la
+    deja en el log, porque corre en un hilo donde nadie mas la veria. En un test
+    eso la esconde: un cierre que revienta despues de lo que el test comprueba
+    pasaria en verde. El test que provoca el error a proposito lo comprueba y
+    vacia caplog.
+    """
+    yield
+    ocultos = [r.getMessage() for r in caplog.get_records('call')
+               if r.name == 'tray_app' and r.getMessage().startswith('Error cerrando la reuni')]
+    assert not ocultos, ocultos[0]
+
+
 @pytest.fixture
 def tray_factory(tr_dirs):
     """Fabrica TrayApp SIN pasar por __init__, para no arrancar los tres hilos.
