@@ -524,11 +524,26 @@ def _memory_floor_ok() -> bool:
     return st is None or st[1] >= COMMIT_FLOOR_MB
 
 
+def _work_priority(mode: str) -> str:
+    """La prioridad para transcribir. En vivo, normal: medido el 20/10/2026 en
+    una reunion real, con 'below' Windows lo trataba como proceso en segundo
+    plano y le daba 0,7 nucleos para 4 hilos ('small' a 1-3 veces tiempo real,
+    4 min de retraso); con 'normal', 2,2 nucleos y 0,3-0,5 veces tiempo real.
+    De fondo, la minima: ahi si debe ceder ante todo (Teams incluido)."""
+    return 'idle' if mode == MODE_BACKGROUND else 'normal'
+
+
+def _opt_out_of_efficiency_mode() -> bool:
+    """Fuera del modo de eficiencia de Windows (ver win_power)."""
+    import win_power
+    return win_power.opt_out_of_efficiency_mode()
+
+
 def _set_priority(level: str) -> None:
-    """'normal' para cargar el modelo; 'idle' (fondo) o 'below' (en vivo) para
-    trabajar. La prioridad se baja DESPUES de cargar: medido el 18/10/2026, un
-    proceso lanzado ya con prioridad baja tardaba ~48 s en arrancar (frente a 2 s)
-    y mas de 60 s en cargar el modelo."""
+    """'normal' para cargar el modelo; luego la de _work_priority. La prioridad
+    se baja DESPUES de cargar: medido el 18/10/2026, un proceso lanzado ya con
+    prioridad baja tardaba ~48 s en arrancar (frente a 2 s) y mas de 60 s en
+    cargar el modelo."""
     if os.name != 'nt':
         return
     try:
@@ -732,6 +747,8 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
         log.info(f"live: {wav.name} ya termino antes de arrancar; salgo")
         return
     _start_watchdog(daemon_pid, daemon_ct)
+    if not _opt_out_of_efficiency_mode():
+        log.info("live: no se pudo sacar el proceso del modo de eficiencia de Windows")
 
     # Si se relanzara, sigue despues de lo ultimo que hizo: lo hecho no se repite.
     records = read_records(wav)
@@ -823,7 +840,7 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
             model = WhisperModel(name, device='cpu', compute_type='int8',
                                  cpu_threads=PROFILES[mode]['threads'], local_files_only=True)
             model_name = name
-            _set_priority('idle' if mode == MODE_BACKGROUND else 'below')
+            _set_priority(_work_priority(mode))
             log.info(f"live: modelo '{name}' cargado en {time.monotonic() - t0:.1f}s ({mode})")
             _write_status(wav, state='running', mode=mode, model=name)
         if mode == MODE_BACKGROUND and lang is None:

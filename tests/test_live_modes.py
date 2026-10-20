@@ -570,7 +570,9 @@ def proceso(wav, monkeypatch):
     monkeypatch.setattr(lt, '_start_watchdog', lambda *_a: None)
     monkeypatch.setattr(lt, '_memory_ok', lambda _n: True)
     monkeypatch.setattr(lt, '_memory_floor_ok', lambda: True)
-    monkeypatch.setattr(lt, '_set_priority', lambda _l: None)
+    prioridades, eficiencia = [], []
+    monkeypatch.setattr(lt, '_set_priority', prioridades.append)
+    monkeypatch.setattr(lt, '_opt_out_of_efficiency_mode', lambda: eficiencia.append(1) or True)
     monkeypatch.setattr(lt, 'time', types.SimpleNamespace(
         sleep=lambda _s: real_sleep(0.01), monotonic=time.monotonic, perf_counter=time.perf_counter))
     monkeypatch.setattr(transcriber, 'WHISPER_LANGUAGE', 'es')
@@ -595,7 +597,8 @@ def proceso(wav, monkeypatch):
         return cond()
 
     yield types.SimpleNamespace(partes=partes, arrancar=arrancar, hasta=hasta,
-                                cargando=cargando, soltar=soltar)
+                                cargando=cargando, soltar=soltar,
+                                prioridades=prioridades, eficiencia=eficiencia)
     soltar.set()
     wav.write_bytes(b'')          # la grabacion paro: el proceso sale
     for hilo in hilos:
@@ -672,6 +675,49 @@ def test_al_pasar_de_fondo_a_en_vivo_salta_a_ahora_con_small(proceso, wav):
     assert proceso.hasta(lambda: primer_registro(wav) is not None)
     r = primer_registro(wav)
     assert r['model'] == 'small' and r['start_frame'] == (100 - lt.LIVE_JUMP_BACK_S) * SR
+
+
+def test_en_vivo_trabaja_con_prioridad_normal_y_fuera_del_modo_eficiencia(proceso, wav):
+    """Reunion real del 20/10/2026: con prioridad 'below' y sin ventana, Windows
+    le daba 0,7 nucleos para 4 hilos; 'small' iba a 1-3 veces tiempo real y el
+    transcript en vivo llego a 4 min de retraso. Con prioridad normal: 2,2
+    nucleos y 0,3-0,5 veces tiempo real."""
+    proceso.partes(40)
+    lt.write_ctl(wav, mode='live', gate='free')
+    proceso.arrancar()
+    assert proceso.hasta(lambda: primer_registro(wav) is not None)
+    assert proceso.prioridades[-1] == 'normal' and 'below' not in proceso.prioridades
+    assert proceso.eficiencia == [1]
+
+
+def test_de_fondo_sigue_cediendo_con_la_prioridad_minima():
+    assert lt._work_priority(lt.MODE_BACKGROUND) == 'idle'
+    assert lt._work_priority(lt.MODE_LIVE) == 'normal'
+
+
+def test_salir_del_modo_eficiencia_usa_la_api_documentada(monkeypatch):
+    """SetProcessInformation(ProcessPowerThrottling=4) con version 1,
+    ControlMask=EXECUTION_SPEED (1) y StateMask=0: "no me frenes"."""
+    import ctypes
+    if not hasattr(ctypes, 'windll'):
+        pytest.skip('solo Windows')
+    vistos = []
+
+    class K32:
+        def GetCurrentProcess(self):
+            return -1
+
+        def SetProcessInformation(self, handle, clase, ref, size):
+            st = ref._obj
+            vistos.append((clase, st.Version, st.ControlMask, st.StateMask, size))
+            return 1
+
+    import win_power
+    monkeypatch.setattr(win_power, '_done', False)
+    monkeypatch.setattr(ctypes, 'windll', types.SimpleNamespace(kernel32=K32()))
+    assert lt._opt_out_of_efficiency_mode() is True
+    assert vistos == [(4, 1, 1, 0, 12)]
+    assert lt._opt_out_of_efficiency_mode() is True and len(vistos) == 1, "una vez por proceso"
 
 
 def test_en_vivo_a_mitad_se_lanza_ya_y_desde_ahora(wav, monkeypatch):

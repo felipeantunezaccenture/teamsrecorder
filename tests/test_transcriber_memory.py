@@ -99,6 +99,20 @@ def test_la_cache_de_buferes_de_mkl_queda_desactivada():
     assert os.environ.get('MKL_DISABLE_FAST_MM') == '1'
 
 
+def test_antes_de_cargar_whisper_el_proceso_sale_del_modo_eficiencia(monkeypatch):
+    """Reunion real del 20/10/2026: el daemon transcribia con 2,4 de 14 nucleos
+    (Windows lo frenaba por no tener ventana); fuera de ese modo, 7,7."""
+    import win_power
+    orden = []
+    monkeypatch.setattr(win_power, 'opt_out_of_efficiency_mode', lambda: orden.append('eficiencia') or True)
+    monkeypatch.setitem(sys.modules, 'faster_whisper', types.SimpleNamespace(
+        WhisperModel=lambda name, **k: orden.append('carga') or object()))
+    monkeypatch.setattr(tr, '_model', None)
+    monkeypatch.setattr(tr, '_model_name', None)
+    tr._get_model('tiny')
+    assert orden == ['eficiencia', 'carga']
+
+
 def test_la_reunion_siguiente_vuelve_a_cargar_el_modelo_y_transcribe(
         monkeypatch, wav_factory, tr_dirs, fake_whisper_model):
     """Lo que de verdad podria romper este cambio: que tras soltar el modelo la

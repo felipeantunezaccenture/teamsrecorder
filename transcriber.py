@@ -189,6 +189,11 @@ def _get_model(name: str | None = None):
             _model = None
             _model_name = None
             gc.collect()
+            # Sin esto, Windows frena al daemon (sin ventana) al transcribir:
+            # 2,4 de 14 nucleos para 12 hilos (medido el 20/10/2026). Ver win_power.
+            import win_power
+            if not win_power.opt_out_of_efficiency_mode():
+                log.info("No se pudo sacar el proceso del modo de eficiencia de Windows")
             from faster_whisper import WhisperModel
             try:
                 import psutil
