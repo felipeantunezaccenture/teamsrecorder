@@ -436,3 +436,119 @@ def test_el_margen_de_espera_es_de_minuto_y_medio(tray):
 def test_la_sesion_se_protege_con_un_lock(tray):
     """El detector, el pipeline y el temporizador la tocan desde tres hilos."""
     assert isinstance(tray._session_lock, type(threading.RLock()))
+
+
+# ── Cerrar la sesion en su propio hilo: descartes y fallos ───────────────
+#
+# _finalize_session corre en un hilo suyo (el Timer de _schedule_finalize,
+# finalize_pending_now o la llegada de otra grabacion), asi que lo que lance no
+# lo recoge nadie: el _pipeline_loop que sabe descartar esta en otro hilo. Hasta
+# el 20/10/2026 un descarte a mitad del cierre moria ahi, con las minutas en el
+# panel, el WAV en recordings/ y el trabajo colgado en "Generando minutas".
+
+def _en_papelera(tr_dirs):
+    """Nombres de todo lo que hay en la papelera, de todas sus carpetas."""
+    trash = tr_dirs / 'trash'
+    if not trash.is_dir():
+        return set()
+    return {f.name for d in trash.iterdir() for f in d.iterdir()}
+
+
+def test_descartada_antes_de_las_minutas_va_a_la_papelera(tray, cierre_aislado, tr_dirs,
+                                                          wav_factory, fake_outlook):
+    """El caso de verdad: se descarta en el minuto y medio de espera por si te
+    reconectas, que es cuando el panel aun ofrece el boton."""
+    a = wav_factory(ta.RECORDINGS_DIR / f'{STEM_A}.wav', seconds=0.1)
+    tray.cancel_job(STEM_A)
+
+    tray._finalize_session(_sesion(tray, [a], ['texto']))
+
+    assert cierre_aislado['minutas_de'] is None, "pago minutas de una reunion descartada"
+    assert not a.exists()
+    assert {a.name, f'{STEM_A}_transcript.txt'} <= _en_papelera(tr_dirs)
+    assert tray._current_job == {}, "el trabajo se queda colgado en el panel"
+    assert not tray._is_cancelled(STEM_A)
+
+
+@pytest.mark.parametrize('se_guardan', [True, False])
+def test_descartada_mientras_se_generaban_las_minutas_va_a_la_papelera(
+        tray, cierre_aislado, tr_dirs, wav_factory, fake_outlook, monkeypatch, se_guardan):
+    """El descarte llega con Claude generando. Las minutas, si llegaron a
+    guardarse, se van con el resto; y una reunion descartada no saca acciones."""
+    import actions_enricher
+    import minutes_generator
+    a = wav_factory(ta.RECORDINGS_DIR / f'{STEM_A}.wav', seconds=0.1)
+    acciones = []
+
+    def generate_y_descartar(*_a, **_k):
+        tray.cancel_job(STEM_A)
+        return 'TITULO: Comite Semanal\n\n## Resumen\n\ngenerado'
+
+    def save(minutes, output_path):
+        if se_guardan:
+            output_path.write_text(minutes, encoding='utf-8')
+        return se_guardan
+
+    monkeypatch.setattr(minutes_generator, 'generate_minutes', generate_y_descartar)
+    monkeypatch.setattr(minutes_generator, 'save_minutes', save)
+    monkeypatch.setattr(actions_enricher, 'enrich_and_save', lambda *a, **k: acciones.append(a))
+
+    tray._finalize_session(_sesion(tray, [a], ['texto']))
+
+    assert list(ta.MINUTES_DIR.glob('*.md')) == [], "las minutas siguen en el panel"
+    papelera = _en_papelera(tr_dirs)
+    assert a.name in papelera
+    assert any(n.endswith('.md') for n in papelera) is se_guardan
+    assert acciones == []
+    assert tray._current_job == {}
+
+
+def test_un_error_inesperado_no_deja_el_trabajo_colgado(tray, cierre_aislado, tr_dirs,
+                                                        wav_factory, fake_outlook,
+                                                        monkeypatch, caplog):
+    """Sin nadie que la recoja, la excepcion dejaba el panel para siempre en
+    'Generando minutas' y no quedaba ni una linea en noted.log. El WAV se queda
+    en recordings/, para reintentarlo en el siguiente arranque."""
+    import minutes_generator
+    a = wav_factory(ta.RECORDINGS_DIR / f'{STEM_A}.wav', seconds=0.1)
+    mensajes = []
+    monkeypatch.setattr(ta.TrayApp, 'set_processing', lambda self, m='': mensajes.append(m))
+
+    def generate_roto(*_a, **_k):
+        raise RuntimeError('el CLI de claude no responde')
+
+    monkeypatch.setattr(minutes_generator, 'generate_minutes', generate_roto)
+
+    tray._finalize_session(_sesion(tray, [a], ['texto']))
+
+    assert tray._current_job == {}
+    assert mensajes[-1] == ''
+    assert 'el CLI de claude no responde' in caplog.text
+    assert a.exists()
+
+
+def test_si_las_minutas_no_se_guardan_se_conservan_wav_y_transcript(
+        tray, cierre_aislado, tr_dirs, wav_factory, fake_outlook, monkeypatch):
+    """Sin .md la reunion no existe en el panel. Si el WAV se fuera a processed/
+    no se reintentaria nunca: _recover_pending solo mira recordings/. Asi se
+    reencola en el siguiente arranque y el pipeline reaprovecha el transcript,
+    sin volver a pasar por Whisper."""
+    import actions_enricher
+    import minutes_generator
+    a = wav_factory(ta.RECORDINGS_DIR / f'{STEM_A}.wav', seconds=0.1)
+    movidos, acciones, mensajes, avisos = [], [], [], []
+    monkeypatch.setattr(minutes_generator, 'save_minutes', lambda m, p: False)
+    monkeypatch.setattr(ta.TrayApp, '_move_to_processed', lambda self, w, t: movidos.append(w))
+    monkeypatch.setattr(ta.TrayApp, 'set_processing', lambda self, m='': mensajes.append(m))
+    monkeypatch.setattr(ta.TrayApp, '_notify', lambda self, t, m: avisos.append(t))
+    monkeypatch.setattr(actions_enricher, 'enrich_and_save', lambda *a, **k: acciones.append(a))
+
+    tray._finalize_session(_sesion(tray, [a], ['texto']))
+
+    assert movidos == [], "el WAV se fue a processed/ sin minutas"
+    assert (ta.RECORDINGS_DIR / f'{STEM_A}_transcript.txt').exists()
+    assert list(ta.MINUTES_DIR.iterdir()) == [], "transcript huerfano en minutes/"
+    assert acciones == []
+    assert 'Noted ⚠' in avisos
+    assert tray._current_job == {}
+    assert mensajes[-1] == ''
