@@ -675,6 +675,42 @@ def extract_title_from_minutes(raw_text: str) -> tuple[str, str]:
     return 'Reunion', raw_text
 
 
+_MODE_MARKER = re.compile(r'^<!-- noted:minutes=(summary|off) -->', re.MULTILINE)
+
+_BRIEF_NOTE = {
+    'es': ("_Minutas completas desactivadas en Ajustes. El transcript está en su pestaña, y puedes "
+           "generar las minutas de esta reunión con «Generar minutas completas»._"),
+    'en': ("_Full minutes are turned off in Settings. The transcript is in its tab, and you can "
+           "generate this meeting's minutes with «Generate full minutes»._"),
+}
+
+
+def brief_minutes(title: str, mode: str, summary: str | None = None, language: str = 'es') -> str:
+    """Las minutas de los niveles 'summary' y 'off' (decision de Felipe, 19/10/2026).
+
+    Sin ellas la reunion no saldria en el panel (que lista por .md), su
+    transcript no se podria abrir y se reprocesaria en cada arranque. Llevan la
+    linea TITULO: como las completas, y un marcador ESTRUCTURAL (un comentario
+    HTML, invisible al renderizar) que dice que son breves: el panel lo usa para
+    ofrecer las completas. summary: lo que devolvio meeting_qa.summarize, o None.
+    """
+    note = _BRIEF_NOTE['en' if language == 'en' else 'es']
+    body = ''
+    if summary:
+        first, _, rest = summary.partition('\n')
+        if first.startswith('TITULO:'):
+            title = first.removeprefix('TITULO:').strip() or title
+            summary = rest.strip()
+        body = f"{summary.strip()}\n\n" if summary.strip() else ''
+    return f"TITULO: {title}\n<!-- noted:minutes={mode} -->\n\n{body}{note}\n"
+
+
+def brief_mode_of(md_text: str) -> str | None:
+    """'summary' u 'off' si son minutas breves; None si son completas."""
+    m = _MODE_MARKER.search(md_text[:500])
+    return m.group(1) if m else None
+
+
 def save_minutes(minutes: str, output_path: Path) -> bool:
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)

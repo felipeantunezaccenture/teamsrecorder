@@ -57,6 +57,10 @@ _STR = {
         recordings_pending='{n} grabacion(es) pendiente(s) de procesar',
         action_items='Generando acciones...',
         ready='Minutas y acciones listas',
+        summarizing='Resumiendo la reunión...',
+        project_step='Archivando en su proyecto...',
+        ready_minutes='Minutas listas',
+        ready_brief='Transcript listo',
         transcription_failed='No se pudo transcribir la grabación. Revisa el log para más detalles.',
         no_speech='La grabación no contiene voz: no se ha generado transcripción.',
         minutes_failed='No se pudieron generar las minutas. Revisa el log para más detalles.',
@@ -86,6 +90,10 @@ _STR = {
         recordings_pending='{n} recording(s) pending processing',
         action_items='Generating action items...',
         ready='Meeting minutes & action items ready',
+        summarizing='Summarizing the meeting...',
+        project_step='Filing it in its project...',
+        ready_minutes='Minutes ready',
+        ready_brief='Transcript ready',
         transcription_failed='Transcription failed. Check the log for details.',
         no_speech='No speech in the recording: no transcript was produced.',
         minutes_failed='Minutes generation failed. Check the log for details.',
@@ -1093,6 +1101,11 @@ class TrayApp:
         from minutes_generator import generate_minutes, extract_title_from_minutes, save_minutes
         from html_exporter import export_to_html
         from actions_enricher import enrich_and_save
+        import config as _config
+
+        # Leidos ahora y no al importar: se cambian desde el panel, otro proceso.
+        minutes_mode = _config.minutes_mode()
+        actions_on = _config.actions_enabled()
 
         with self._session_lock:
             if session.get('finalized'):
@@ -1157,50 +1170,59 @@ class TrayApp:
             except Exception:
                 pass
 
+        # La memoria del proyecto y los participantes solo alimentan las minutas
+        # completas: con minutas breves no se pagan (recorrer documentos, Outlook).
         _proj, _ctx_dir = None, None
-        try:
-            from project_context import prepare_context
-            _nm = re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_(.+)', wav_path.stem)
-            _mtg_name = _nm.group(1).replace('_', ' ') if _nm else ''
-            _proj, _ctx_dir = prepare_context(transcript_text, _mtg_name)
-            if _ctx_dir:
-                log.info(f"Memoria de proyecto activa: {_proj.get('name')}")
-        except Exception as e:
-            log.warning(f"No se pudo preparar la memoria de proyecto: {e}")
-
-        # Fetch Outlook participants BEFORE generating minutes so they can be injected into the prompt
         participants = []
-        try:
-            from outlook_sender import find_meeting_participants
-            _pm = re.match(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})', wav_path.stem)
-            if _pm:
-                from datetime import datetime as _dt
-                _rec_time = _dt(int(_pm.group(1)), int(_pm.group(2)), int(_pm.group(3)),
-                                int(_pm.group(4)), int(_pm.group(5)))
-                _pnm = re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_(.+)', wav_path.stem)
-                _rec_name = _pnm.group(1).replace('_', ' ') if _pnm else None
-                if _rec_name and _rec_name.strip().lower() in ('manual', 'recording'):
-                    _rec_name = None
-                participants = find_meeting_participants(_rec_time, meeting_name=_rec_name)
-                log.info(f"Participantes detectados: {len(participants)}")
-        except Exception as e:
-            log.warning(f"No se pudieron detectar participantes: {e}")
+        if minutes_mode == 'full':
+            try:
+                from project_context import prepare_context
+                _nm = re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_(.+)', wav_path.stem)
+                _mtg_name = _nm.group(1).replace('_', ' ') if _nm else ''
+                _proj, _ctx_dir = prepare_context(transcript_text, _mtg_name)
+                if _ctx_dir:
+                    log.info(f"Memoria de proyecto activa: {_proj.get('name')}")
+            except Exception as e:
+                log.warning(f"No se pudo preparar la memoria de proyecto: {e}")
+
+            # Fetch Outlook participants BEFORE generating minutes so they can be injected into the prompt
+            try:
+                from outlook_sender import find_meeting_participants
+                _pm = re.match(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})', wav_path.stem)
+                if _pm:
+                    from datetime import datetime as _dt
+                    _rec_time = _dt(int(_pm.group(1)), int(_pm.group(2)), int(_pm.group(3)),
+                                    int(_pm.group(4)), int(_pm.group(5)))
+                    _pnm = re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_(.+)', wav_path.stem)
+                    _rec_name = _pnm.group(1).replace('_', ' ') if _pnm else None
+                    if _rec_name and _rec_name.strip().lower() in ('manual', 'recording'):
+                        _rec_name = None
+                    participants = find_meeting_participants(_rec_time, meeting_name=_rec_name)
+                    log.info(f"Participantes detectados: {len(participants)}")
+            except Exception as e:
+                log.warning(f"No se pudieron detectar participantes: {e}")
 
         # Última salida antes del paso caro: generar minutas es una llamada a
         # Claude, y no tiene sentido pagarla si la reunión ya está descartada.
         if self._is_cancelled(wav_path.stem):
             raise _Cancelled()
 
-        self._current_job.update({'step': 2, 'step_label': 'Generando minutas', 'step_started': time.time()})
-        self.set_processing('Generando minutas...')
-        raw = generate_minutes(transcript_text, wav_path, extra_context=extra_context,
-                               language=detected_language, context_dir=_ctx_dir,
-                               participants=participants)
-        if not raw:
-            log.error("Generación de minutas fallida")
-            self._notify('Noted ⚠', s['minutes_failed'])
-            self.set_processing('')
-            return
+        if minutes_mode == 'full':
+            self._current_job.update({'step': 2, 'step_label': 'Generando minutas', 'step_started': time.time()})
+            self.set_processing('Generando minutas...')
+            raw = generate_minutes(transcript_text, wav_path, extra_context=extra_context,
+                                   language=detected_language, context_dir=_ctx_dir,
+                                   participants=participants)
+            if not raw:
+                # Antes se hacia return: sin .md la reunion no salia en el panel y
+                # se reprocesaba en cada arranque (revision del 20/10/2026). Quedan
+                # unas minimas, con "Generar minutas completas" para reintentar.
+                log.error("Generación de minutas fallida: se guardan minutas mínimas")
+                self._notify('Noted ⚠', s['minutes_failed'])
+                raw = self._brief_minutes(transcript_text, wav_path, 'off', detected_language, s)
+                minutes_mode = 'off'
+        else:
+            raw = self._brief_minutes(transcript_text, wav_path, minutes_mode, detected_language, s)
 
         title, content = extract_title_from_minutes(raw)
         minutes_path = get_minutes_path(wav_path, title)
@@ -1242,16 +1264,22 @@ class TrayApp:
             log.warning(f"coaching_plugin: {_ce}")
 
         s = _STR.get(get_ui_language(), _STR['en'])
-        self._notify('Noted', s['action_items'])
-        self._current_job.update({'step': 3, 'step_label': 'Generando acciones', 'step_started': time.time()})
-        self.set_processing(s['action_items'])
+        # Las acciones se sacan de las minutas completas: con minutas breves no
+        # hay de donde. El proyecto se detecta igual, para archivar la reunion.
+        with_actions = actions_on and minutes_mode == 'full'
+        if with_actions:
+            self._notify('Noted', s['action_items'])
+        self._current_job.update({'step': 3, 'step_label': 'Generando acciones' if with_actions else 'Archivando',
+                                  'step_started': time.time()})
+        self.set_processing(s['action_items'] if with_actions else s['project_step'])
 
         _transcript_for_export = transcript_text
+        _ready = s['ready'] if with_actions else (s['ready_minutes'] if minutes_mode == 'full' else s['ready_brief'])
 
         def on_done():
             self._current_job = {}
             self.set_processing('')
-            self._notify('Noted', s['ready'])
+            self._notify('Noted', _ready)
             # Aquí ya existe el _actions.json con el project_id definitivo, así
             # que este es el único punto donde se decide la carpeta del proyecto.
             try:
@@ -1280,7 +1308,12 @@ class TrayApp:
                 daemon=True, name='GlossarySuggest',
             ).start()
 
-        enrich_and_save(minutes_path, PROJECT_DIR.parent, on_done=on_done)
+        if with_actions:
+            enrich_and_save(minutes_path, PROJECT_DIR.parent, on_done=on_done)
+        else:
+            from actions_enricher import save_without_actions
+            save_without_actions(minutes_path, PROJECT_DIR.parent, on_done=on_done,
+                                 extra_text=transcript_text[:4000] if minutes_mode != 'full' else None)
 
         def _brain_update():
             try:
@@ -1308,6 +1341,27 @@ class TrayApp:
                 log.info(f"Glosario: {n} sugerencia(s) nueva(s) de {stem}")
         except Exception as e:
             log.warning(f"Glosario: sin sugerencias de {stem}: {e}")
+
+    def _brief_minutes(self, transcript_text: str, wav_path: Path, mode: str, language: str, s: dict) -> str:
+        """Minutas de los niveles 'summary' y 'off'. Nunca fallan: si el resumen
+        no sale, quedan las minimas, y la reunion se guarda y se ve igual."""
+        from minutes_generator import brief_minutes
+        _nm = re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_(.+)', wav_path.stem)
+        name = _nm.group(1).replace('_', ' ').strip() if _nm else ''
+        title = name if name and name.lower() not in ('manual', 'recording', 'cli') else 'Reunion'
+        summary = None
+        if mode == 'summary':
+            self._current_job.update({'step': 2, 'step_label': 'Resumiendo', 'step_started': time.time()})
+            self.set_processing(s['summarizing'])
+            try:
+                import meeting_qa
+                summary = meeting_qa.summarize(transcript_text)
+            except Exception as e:
+                log.warning(f"Resumen de la reunion fallido: {e}")
+            if not summary:
+                log.warning("Sin resumen de la reunion: se guardan minutas minimas")
+        return brief_minutes(title, 'summary' if summary else 'off', summary,
+                             'en' if language == 'en' else 'es')
 
     def _move_to_processed(self, wav_path: Path, transcript_path: Path):
         dest = RECORDINGS_DIR / 'processed'

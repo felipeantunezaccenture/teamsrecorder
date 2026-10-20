@@ -3,14 +3,12 @@ import logging
 import os
 import subprocess
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
-from config import PROJECT_DIR
+from config import get_claude_bin as _get_claude_bin, PROJECT_DIR, clean_env as _clean_env
 
 log = logging.getLogger(__name__)
-
-from config import get_claude_bin as _get_claude_bin, clean_env as _clean_env
 
 _CLAUDE_TYPES = {'instruction', 'code_change', 'document_change'}
 
@@ -91,10 +89,12 @@ def _run_enrichment(minutes_path: Path, projects_dir: Path, on_done=None):
         all_actions = merge_actions(claude_actions, human_actions)
 
         if not all_actions:
+            # on_done lo llama el finally: llamarlo tambien aqui archivaba y
+            # exportaba la reunion dos veces. Y sin acciones el proyecto se
+            # detecta igual: si no, la reunion no se archivaba.
             log.info("Sin acciones en las minutas")
             _save_json(minutes_path, all_actions, {})
-            if on_done:
-                on_done()
+            _detect_and_save_project(minutes_path, projects_dir)
             return
 
         enriched_map = {}
@@ -181,17 +181,38 @@ def _run_enrichment(minutes_path: Path, projects_dir: Path, on_done=None):
         if on_done:
             try:
                 on_done()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"_run_enrichment: on_done fallo: {e}", exc_info=True)
 
 
-def _detect_and_save_project(minutes_path: Path, projects_dir: Path):
+def save_without_actions(minutes_path: Path, projects_dir: Path, extra_text: str | None = None,
+                         on_done=None):
+    """Acciones apagadas o minutas breves (decision de Felipe, 19/10/2026): sin
+    extraer ni enriquecer acciones, pero con su _actions.json vacio y el
+    proyecto detectado, que es de lo que dependen el archivado, la exportacion
+    y scan_meetings.py. extra_text: el principio del transcript, cuando las
+    minutas son breves y no bastan para reconocer el proyecto."""
+    def run():
+        try:
+            _save_json(minutes_path, [], {})
+            _detect_and_save_project(minutes_path, projects_dir, extra_text)
+        except Exception as e:
+            log.error(f"save_without_actions: {e}", exc_info=True)
+        finally:
+            if on_done:
+                try:
+                    on_done()
+                except Exception as e:
+                    log.warning(f"save_without_actions: on_done fallo: {e}", exc_info=True)
+    threading.Thread(target=run, daemon=True, name='ProjectDetect').start()
+
+
+def _detect_and_save_project(minutes_path: Path, projects_dir: Path, extra_text: str | None = None):
     """Ask Claude to identify which project this meeting belongs to."""
     _claude_bin = _get_claude_bin()
     if not _claude_bin:
         return
     # Load projects
-    from config import PROJECT_DIR
     projects_file = PROJECT_DIR / 'projects.json'
     if not projects_file.exists():
         return
@@ -217,6 +238,8 @@ def _detect_and_save_project(minutes_path: Path, projects_dir: Path):
             break
 
     content = raw[:4000]
+    if extra_text:
+        content += f"\n\nTranscript (beginning):\n{extra_text[:4000]}"
 
     proj_block = '\n'.join(
         f"- id: {p['id']} | name: {p['name']} | description: {p.get('description','')} | stakeholders: {', '.join(p.get('stakeholders', []))}"
@@ -247,8 +270,9 @@ No explanation, just the id or "none"."""
         else:
             si = None
             CREATE_NO_WINDOW = 0
+        # Sin guardar la sesion: el prompt lleva extracto de minutas o transcript.
         result = subprocess.run(
-            [_claude_bin, '-p'],
+            [_claude_bin, '-p', '--no-session-persistence'],
             input=prompt, capture_output=True, text=True,
             encoding='utf-8', timeout=60, env=env,
             startupinfo=si if os.name == 'nt' else None,
@@ -280,14 +304,14 @@ def add_manual_action(minutes_path: Path, title: str,
         else:
             data = {
                 'minutes':      str(minutes_path),
-                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'generated_at': datetime.now(UTC).isoformat(),
                 'actions':      [],
             }
         actions = data.setdefault('actions', [])
         next_index = max((a.get('index', -1) for a in actions), default=-1) + 1
         m = _re.match(r'(\d{4})(\d{2})(\d{2})', minutes_path.stem)
         created_at = (f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m
-                      else datetime.now(timezone.utc).date().isoformat())
+                      else datetime.now(UTC).date().isoformat())
         action = {
             'index':            next_index,
             'type':             'human',
@@ -324,7 +348,7 @@ def set_meeting_project_id(minutes_path: Path, project_id: str) -> bool:
         else:
             data = {
                 'minutes':      str(minutes_path),
-                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'generated_at': datetime.now(UTC).isoformat(),
                 'actions':      [],
             }
         data['project_id'] = project_id or 'none'
@@ -370,7 +394,7 @@ def detect_projects_for_all_meetings() -> dict:
         if not ap.exists():
             stub = {
                 'minutes':      str(md),
-                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'generated_at': datetime.now(UTC).isoformat(),
                 'actions':      [],
             }
             ap.write_text(json.dumps(stub, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -389,7 +413,7 @@ def _save_json(minutes_path: Path, actions, enriched_map):
     from config import ME_NAME
     stem = minutes_path.stem
     m_date = _re.match(r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})', stem)
-    created_at = f"{m_date.group(1)}-{m_date.group(2)}-{m_date.group(3)}" if m_date else datetime.now(timezone.utc).date().isoformat()
+    created_at = f"{m_date.group(1)}-{m_date.group(2)}-{m_date.group(3)}" if m_date else datetime.now(UTC).date().isoformat()
 
     result = []
     for a in actions:
@@ -417,7 +441,7 @@ def _save_json(minutes_path: Path, actions, enriched_map):
     ap = get_actions_path(minutes_path)
     data = {
         'minutes':      str(minutes_path),
-        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'generated_at': datetime.now(UTC).isoformat(),
         'actions':      result,
     }
     ap.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')

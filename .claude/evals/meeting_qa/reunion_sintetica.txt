@@ -1,0 +1,43 @@
+[00:05] [Felipe]: Buenas, ¿se me escucha bien? Vale, empezamos que somos pocos.
+[00:14] [Felipe]: El objetivo de hoy es preparar el taller de priorización de casos de uso del proyecto Atlas.
+[00:26] [Otros]: Perfecto. ¿Lo hacemos con la agenda que mandaste el viernes o la cambiamos?
+[00:35] [Felipe]: La agenda la repasamos al final, primero quiero cerrar fecha y sitio.
+[00:51] [Otros]: Por nuestra parte el taller sería el jueves 23 de octubre a las diez de la mañana.
+[01:04] [Felipe]: El jueves 23 a las diez me va bien. ¿Dónde lo hacemos?
+[01:12] [Otros]: En la sala Nube, en la planta tres, que es la única con pantalla grande.
+[01:25] [Felipe]: Genial, sala Nube planta tres.
+[01:41] [Otros]: Sobre los casos de uso, ahora mismo la lista larga tiene catorce casos.
+[01:55] [Otros]: La idea es salir del taller con seis priorizados, no más.
+[02:08] [Felipe]: Catorce a seis me parece razonable. ¿Con qué criterio priorizamos?
+[02:19] [Otros]: Valor de negocio frente a esfuerzo, la matriz de siempre.
+[02:31] [Felipe]: Vale, valor por esfuerzo. Lo dejo puesto en la plantilla.
+[02:50] [Otros]: Una cosa importante del presupuesto. Para la primera fase hay ciento veinte mil euros aprobados.
+[03:04] [Felipe]: ¿Ciento veinte mil para toda la primera fase, incluido el piloto?
+[03:11] [Otros]: Sí, todo incluido.
+[03:30] [Felipe]: Para el taller, ¿usamos mirro o mural?
+[03:38] [Otros]: Nosotros tenemos las dos, pero las licencias de Miro ya están pagadas para todo el año.
+[03:49] [Otros]: Mural lo íbamos a dar de baja en diciembre.
+[04:01] [Felipe]: Entonces decidido, Miro. No tiene sentido pagar Mural.
+[04:09] [Otros]: De acuerdo, Miro.
+[04:30] [Otros]: Hay un riesgo que quiero que quede claro: los datos de SAP no van a estar disponibles hasta noviembre.
+[04:44] [Felipe]: ¿Eso afecta a algún caso de uso de la lista?
+[04:52] [Otros]: A los de previsión de demanda sí, a esos tres los tendremos que valorar con datos de muestra.
+[05:10] [Felipe]: Vale, lo apuntamos como riesgo en la plantilla.
+[05:33] [Otros]: Otra cosa, ¿invitamos a alguien de finanzas al taller?
+[05:41] [Felipe]: Yo lo veo útil para el valor de negocio, pero no sé si es el momento.
+[05:50] [Otros]: Lo tengo que consultar con mi jefa, ahora mismo no te lo puedo confirmar.
+[06:02] [Felipe]: Pues lo dejamos abierto y lo vemos la semana que viene.
+[06:25] [Felipe]: Ahora sí, la agenda. Introducción de quince minutos, luego repaso de la lista larga.
+[06:38] [Felipe]: Después votación en Miro y al final la matriz de valor por esfuerzo.
+[06:52] [Otros]: Me parece bien. ¿Quién manda la agenda definitiva?
+[07:00] [Felipe]: La mando yo, antes del martes.
+[07:06] [Otros]: Perfecto, antes del martes.
+[07:24] [Otros]: Por cierto, el café del taller lo pone la cafetería de la planta baja.
+[07:33] [Felipe]: Bien, eso no lo tengo que gestionar yo entonces.
+[07:58] [Otros]: Para preparar la votación, ¿cuántos votos tiene cada persona?
+[08:07] [Felipe]: Tres votos por persona, como hicimos en el taller anterior.
+[08:30] [Felipe]: Creo que lo tenemos casi todo. ¿Cuándo nos volvemos a ver?
+[08:41] [Otros]: El lunes 27 a las nueve y media, para revisar la plantilla antes del taller.
+[08:52] [Felipe]: El lunes 27 a las nueve y media. Yo os comparto el tablero de Miro antes.
+[09:05] [Otros]: Genial. Pues nada más por mi parte.
+[09:12] [Felipe]: Gracias a todos, hasta el lunes.

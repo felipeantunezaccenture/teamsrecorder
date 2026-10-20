@@ -1532,6 +1532,24 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
 .live-transcript { max-height: 60vh; overflow-y: auto; font-size: 13px; line-height: 1.55; color: var(--text); }
 .live-line { padding: 2px 0; }
 .live-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Con la caja de preguntas debajo, el transcript en vivo cede altura, y el
+   conjunto nunca pasa de la ventana (en una baja, el campo o «Cerrar» quedaban fuera). */
+.live-modal-box { max-height: 92vh; overflow-y: auto; }
+.live-modal-box .live-transcript { max-height: 38vh; }
+
+/* Preguntas sobre la reunion (reutiliza las burbujas y chips de .brain-chat-*) */
+.ask-box { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+.transcript-section .ask-box { border-top: none; border-bottom: 1px solid var(--border);
+                               margin: 0 0 12px; padding: 0 0 12px; }
+.ask-title { font-size: 12px; font-weight: 600; color: var(--subtext); margin-bottom: 8px; }
+.ask-thread { display: flex; flex-direction: column; gap: 8px; max-height: 28vh; overflow-y: auto; }
+.ask-thread:empty { display: none; }
+.ask-chips { margin: 8px 0; }
+.ask-chips .brain-chip { padding: 4px 10px; font-size: 12px; }
+.ask-input-row { display: flex; gap: 8px; align-items: flex-end; }
+.ask-upto { font-size: 11px; color: var(--muted); margin: 3px 2px 0; }
+.ask-note { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.brief-minutes-bar { margin: 0 0 12px; }
 .pipeline-job-live { margin-left: 6px; padding: 1px 8px; font-size: 11px; }
 
 .btn.icon-btn { display: inline-flex; align-items: center; gap: 5px; }

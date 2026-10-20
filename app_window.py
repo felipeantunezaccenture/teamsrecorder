@@ -1,3 +1,5 @@
+import atexit
+
 import json
 
 import logging
@@ -75,6 +77,62 @@ _actions_regen_runs: dict = {}
 # Estado de importaciones de transcript: run_id -> {pct, stage, done, error, path}
 
 _import_runs: dict = {}
+
+# Preguntas sobre una reunion (meeting_qa): run_id -> {text, done, error, upto}.
+# Solo en memoria: las preguntas no se guardan (decision de Felipe, 19/10/2026).
+_ask_runs: dict = {}
+
+# Una sesion de claude abierta por conversacion ('live:<stem>' / 'meeting:<ruta>'):
+# arrancarla cuesta 9,5-12 s, asi que se abre al mostrar la caja de preguntas.
+_ask_sessions: dict = {}
+_ask_sessions_lock = threading.Lock()
+_MAX_ASK_SESSIONS = 2
+# Conversaciones cuya vista se cerro: si su pregunta vuelve sin sesion, no se
+# lanza la red de una sola vez (nadie va a ver la respuesta).
+_ask_closed: set = set()
+
+
+def _ask_session(key: str, create: bool = True):
+    """La sesion de esa conversacion, abriendola si hace falta. De paso cierra
+    las que llevan IDLE_S sin usarse o han muerto, y la de un modelo que ya no
+    es el de Ajustes. Nunca cierra una que este respondiendo ni la en vivo por
+    hacer sitio (revision del 20/10/2026). Los cierres, fuera del lock: cada
+    uno puede tardar hasta 3 s."""
+    import meeting_qa
+    import transcriber
+    to_close = []
+    with _ask_sessions_lock:
+        for k, s in list(_ask_sessions.items()):
+            if k != key and (s.idle() or not s.alive()):
+                to_close.append(_ask_sessions.pop(k))
+        s = _ask_sessions.get(key)
+        if s is not None and not s.busy() and (not s.alive() or s.model != meeting_qa.qa_model()):
+            to_close.append(_ask_sessions.pop(key))
+            s = None
+        if s is None and create:
+            s = _ask_sessions[key] = meeting_qa.Session(me_label=transcriber.ME_NAME or 'Grabador')
+            # Cada sesion es un proceso: como mucho dos abiertas (la de la reunion
+            # en curso y la ultima consultada). Si las demas estan ocupadas o son
+            # la en vivo, se pasa del tope un rato antes que cortar una respuesta.
+            while len(_ask_sessions) > _MAX_ASK_SESSIONS:
+                spare = [k for k in _ask_sessions
+                         if k != key and not k.startswith('live:') and not _ask_sessions[k].busy()]
+                if not spare:
+                    break
+                to_close.append(_ask_sessions.pop(min(spare, key=lambda k: _ask_sessions[k].last_used)))
+    for old in to_close:
+        old.close()
+    return s
+
+
+def _close_ask_sessions() -> None:
+    with _ask_sessions_lock:
+        for s in _ask_sessions.values():
+            s.close()
+        _ask_sessions.clear()
+
+
+atexit.register(_close_ask_sessions)
 
 # La integración Semantic Layer (estado, helpers y lógica) vive en
 # exporters/semantic_layer/. AppAPI solo delega en el módulo `semantic`.
@@ -208,6 +266,17 @@ def _pin_key(stem: str) -> str:
     m = re.search(r'(\d{8}_\d{4})', stem)
 
     return m.group(1) if m else stem
+
+
+def _brief_mode(md: Path) -> str | None:
+    """'summary' u 'off' si las minutas son breves (minutes_generator.brief_minutes)."""
+    try:
+        with md.open(encoding='utf-8') as f:
+            head = f.read(600)
+    except OSError:
+        return None
+    from minutes_generator import brief_mode_of
+    return brief_mode_of(head)
 
 
 
@@ -496,6 +565,10 @@ class AppAPI:
                 'project_id':    project_id,
 
                 'pinned':        _pin_key(md.stem) in pins,
+
+                # 'summary' / 'off' si son minutas breves (nivel de Ajustes): el
+                # panel ofrece entonces "Generar minutas completas".
+                'brief':         _brief_mode(md),
 
             }
 
@@ -2861,19 +2934,24 @@ class AppAPI:
 
                 state['stage'] = 'actions'
 
-                ap = get_actions_path(md_path)
+                # Con las acciones apagadas (Ajustes) no se rehacen, y el
+                # _actions.json se conserva: ahi esta el proyecto de la reunion.
+                import config as _cfg
+                if _cfg.actions_enabled():
 
-                if ap.exists():
+                    ap = get_actions_path(md_path)
 
-                    ap.unlink()
+                    if ap.exists():
 
-                _enrich_done = threading.Event()
+                        ap.unlink()
 
-                enrich_and_save(md_path, PROJECT_DIR.parent,
+                    _enrich_done = threading.Event()
 
-                                on_done=lambda: _enrich_done.set())
+                    enrich_and_save(md_path, PROJECT_DIR.parent,
 
-                _enrich_done.wait(timeout=300)  # wait for actions to be re-enriched
+                                    on_done=lambda: _enrich_done.set())
+
+                    _enrich_done.wait(timeout=300)  # wait for actions to be re-enriched
 
 
 
@@ -3181,7 +3259,23 @@ class AppAPI:
 
                 state['stage'] = 'generating'
 
-                raw = generate_minutes(transcript_text, fake_wav, language='auto')
+                # El nivel de minutas de Ajustes, como al cerrar una reunion.
+                import config as _cfg
+                mode = _cfg.minutes_mode()
+                if mode == 'full':
+                    raw = generate_minutes(transcript_text, fake_wav, language='auto')
+                    if not raw:
+                        # Como al cerrar una reunion: el transcript importado se
+                        # guarda y se ve igual, con unas minutas minimas.
+                        from minutes_generator import brief_minutes
+                        log.error("import_transcript: Claude no devolvio minutas; se guardan minimas")
+                        mode = 'off'
+                        raw = brief_minutes('Transcript importado', 'off')
+                else:
+                    import meeting_qa
+                    from minutes_generator import brief_minutes
+                    summary = meeting_qa.summarize(transcript_text) if mode == 'summary' else None
+                    raw = brief_minutes('Transcript importado', 'summary' if summary else 'off', summary)
 
                 ticker_active[0] = False
 
@@ -3239,7 +3333,12 @@ class AppAPI:
 
                 state['stage'] = 'actions'
 
-                enrich_and_save(minutes_path, PROJECT_DIR.parent)
+                if mode == 'full' and _cfg.actions_enabled():
+                    enrich_and_save(minutes_path, PROJECT_DIR.parent)
+                else:
+                    from actions_enricher import save_without_actions
+                    save_without_actions(minutes_path, PROJECT_DIR.parent,
+                                         extra_text=transcript_text[:4000] if mode != 'full' else None)
 
 
 
@@ -3379,6 +3478,96 @@ class AppAPI:
         except Exception as e:
             log.warning(f"switch_live: {e}")
             return False
+
+    def ask_meeting(self, source: str, ref: str, question: str, history: list | None = None) -> dict:
+        """Pregunta sobre una reunion (meeting_qa): en vivo (source='live', ref =
+        stem de la grabacion en curso) o terminada (source='meeting', ref = ruta
+        de su .md). Devuelve {'ok', 'run_id', 'upto'}; la respuesta se va
+        leyendo con get_ask_status, segun la escribe el modelo.
+
+        history: [{'q', 'a'}] de esta conversacion, para poder repreguntar. Lo
+        lleva el panel en memoria: no se guarda en ningun sitio.
+        """
+        import meeting_qa
+        import transcriber
+        question = (question or '').strip()
+        if not question:
+            return {'ok': False, 'error': 'empty'}
+        err = self._ask_ref_error(source, ref)
+        if err:
+            return {'ok': False, 'error': err}
+        if source == 'live':
+            lines = self.get_live_transcript(ref).get('lines') or []
+        else:
+            lines = self.get_transcript_text(ref).splitlines()
+        lines = [line for line in lines if line.strip()]
+        if not lines:
+            return {'ok': False, 'error': 'no_transcript'}
+        hist = [h for h in (history or []) if isinstance(h, dict)][-meeting_qa.HISTORY_TURNS:]
+        upto = meeting_qa.last_timestamp(lines)
+        run_id = uuid.uuid4().hex[:12]
+        _prune_runs(_ask_runs)
+        state = _ask_runs[run_id] = {'text': '', 'done': False, 'error': None, 'upto': upto}
+        key = f'{source}:{ref}'
+        _ask_closed.discard(key)
+
+        def on_text(t):
+            state['text'] = t
+
+        def run():
+            try:
+                r = _ask_session(key).ask(lines, question, hist, on_text=on_text)
+                if r['error'] == 'session_dead' and key in _ask_closed:
+                    r['error'] = 'closed'
+                elif r['error'] == 'session_dead':
+                    # Red: una sola vez, sin sesion. Paga el arranque, pero responde.
+                    r = meeting_qa.ask(lines, question, hist, me_label=transcriber.ME_NAME or 'Grabador',
+                                       on_text=on_text)
+                state['text'] = r['text'] or state['text']
+                state['error'] = r['error']
+            except Exception as e:
+                state['error'] = str(e)
+            finally:
+                state['done'] = True
+
+        threading.Thread(target=run, daemon=True, name='AskMeeting').start()
+        return {'ok': True, 'run_id': run_id, 'upto': upto}
+
+    def _ask_ref_error(self, source: str, ref: str) -> str | None:
+        if source == 'live':
+            return None if ref and Path(ref).name == ref else 'bad_ref'
+        if source == 'meeting':
+            # Comparando textos, sin resolve(): con una ruta de red (\\host\share)
+            # resolve() contactaba con ella antes de rechazarla.
+            md = Path(ref or '')
+            expected = MINUTES_DIR / md.name
+            ok = md.suffix == '.md' and os.path.normcase(str(md)) == os.path.normcase(str(expected))
+            return None if ok else 'bad_ref'
+        return 'bad_source'
+
+    def ask_warmup(self, source: str, ref: str) -> bool:
+        """Abre ya la sesion de claude de esa conversacion: arrancar cuesta
+        9,5-12 s, y asi la primera pregunta responde en un par de segundos."""
+        if self._ask_ref_error(source, ref):
+            return False
+        threading.Thread(target=_ask_session, args=(f'{source}:{ref}',), daemon=True,
+                         name='AskWarmup').start()
+        return True
+
+    def ask_close(self, source: str, ref: str) -> bool:
+        """Cierra la sesion al cerrar la vista: cada una es un proceso abierto."""
+        key = f'{source}:{ref}'
+        _ask_closed.add(key)
+        with _ask_sessions_lock:
+            s = _ask_sessions.pop(key, None)
+        if s is not None:
+            s.close()
+        return True
+
+    def get_ask_status(self, run_id: str) -> dict:
+        """{'text', 'done', 'error', 'upto'} de una pregunta en curso o terminada."""
+        st = _ask_runs.get(run_id)
+        return dict(st) if st else {'text': '', 'done': True, 'error': 'unknown_run', 'upto': None}
 
 
 

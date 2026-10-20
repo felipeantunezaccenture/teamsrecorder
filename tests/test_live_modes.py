@@ -651,9 +651,22 @@ def test_cediendo_sale_si_la_grabacion_se_descarta(proceso, wav):
     hilo = proceso.arrancar()
     assert proceso.hasta(lambda: lt.read_status(wav).get('state') == 'yielded')
     for t in lt.TRACKS:
-        lt.part_path(wav, t).unlink()
+        borrar_aunque_se_este_leyendo(lt.part_path(wav, t))
     hilo.join(5)
     assert not hilo.is_alive()
+
+
+def borrar_aunque_se_este_leyendo(path, intentos=50):
+    """En Windows, borrar un fichero mientras el proceso lo tiene abierto para
+    leer (read_part: abrir, leer, cerrar) da WinError 32 en ese instante. Como
+    el grabador de verdad, se reintenta."""
+    for _ in range(intentos):
+        try:
+            path.unlink()
+            return
+        except PermissionError:
+            time.sleep(0.02)
+    path.unlink()
 
 
 def test_lanzado_en_vivo_a_mitad_de_reunion_empieza_en_ahora(proceso, wav):

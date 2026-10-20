@@ -101,6 +101,32 @@ def get_ui_language() -> str:
     return _settings.get('language', 'es')
 
 
+def read_settings() -> dict:
+    """settings.json leido AHORA, no al importar: el panel es otro proceso y los
+    interruptores que cambia ahi tienen que valer ya en la siguiente reunion.
+    utf-8-sig: un editor de Windows puede haberle puesto BOM. {} si no se puede."""
+    try:
+        data = _json.loads((PROJECT_DIR / 'settings.json').read_text(encoding='utf-8-sig'))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+# Minutas: completas (lo de siempre), solo titulo y resumen, o ninguna (solo
+# transcript). Decision de Felipe (19/10/2026): cada uno elige en Ajustes.
+MINUTES_MODES = ('full', 'summary', 'off')
+
+
+def minutes_mode() -> str:
+    mode = read_settings().get('minutes_mode')
+    return mode if mode in MINUTES_MODES else 'full'
+
+
+def actions_enabled() -> bool:
+    """Extraer y enriquecer acciones. Solo un False explicito las apaga."""
+    return read_settings().get('actions_enabled', True) is not False
+
+
 def clean_env() -> dict:
     """Entorno limpio para subprocesos: elimina tokens de sesión de Anthropic/MCP
     pero preserva variables de configuración de Claude Code (ej. CLAUDE_CODE_GIT_BASH_PATH)
