@@ -5,12 +5,15 @@
 # engine al cargar el archivo). Usamos varias fuentes en cascada para cubrir
 # escenarios donde Task Scheduler no establece $MyInvocation correctamente.
 $dir = $null
-foreach ($candidate in @(
-    $PSScriptRoot,
-    (Split-Path -Parent $PSCommandPath),
-    (Split-Path -Parent $MyInvocation.MyCommand.Path),
-    (Split-Path -Parent $MyInvocation.ScriptName)
-)) {
+# Split-Path -Parent sobre una cadena vacia lanza error en PowerShell 5.1 y
+# abortaba la construccion de la lista antes de probar ningun candidato (con lo
+# que $dir quedaba nulo y el watchdog salia sin escribir en el log). Por eso cada
+# fuente se convierte en candidato solo si no esta vacia.
+$sources = @($PSCommandPath, $MyInvocation.MyCommand.Path, $MyInvocation.ScriptName)
+$parents = foreach ($s in $sources) {
+    if (-not [string]::IsNullOrWhiteSpace($s)) { Split-Path -Parent $s }
+}
+foreach ($candidate in @($PSScriptRoot) + @($parents)) {
     if (-not [string]::IsNullOrWhiteSpace($candidate) -and
         (Test-Path (Join-Path $candidate 'tr_env.ps1'))) {
         $dir = $candidate

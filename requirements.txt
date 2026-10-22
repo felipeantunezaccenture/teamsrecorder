@@ -7,6 +7,10 @@ soundfile>=0.12.1
 numpy>=1.24.0
 pyaudiowpatch>=0.2.12
 faster-whisper>=1.0.0
+# faster-whisper 1.2.x llama a av.open(..., metadata_errors=...), argumento que
+# av 19 ya no acepta ("unexpected keyword argument 'metadata_errors'"). Sin este
+# tope pip instala la ultima y toda transcripcion falla.
+av>=11,<19
 pystray>=0.19.5
 Pillow>=10.0.0
 openai>=1.0.0
