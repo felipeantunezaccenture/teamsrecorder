@@ -524,6 +524,31 @@
 
 
 
+        <!-- Diagnóstico de grabación y audio -->
+
+        <div class="settings-card" style="display:flex;flex-direction:column">
+
+          <div class="settings-card-title" data-i18n="diag_label">Diagnóstico</div>
+
+          <div class="settings-card-desc" data-i18n="diag_desc">Comprueba si puedes grabar ahora mismo: el grabador, el vigilante, tu micrófono y el sonido del ordenador. Incluye una prueba que hace sonar un tono y te graba para confirmar que te capta.</div>
+
+          <div style="display:flex;justify-content:flex-end;margin-top:10px">
+
+            <button class="btn btn-primary btn-sm" onclick="openDiagnostics()" data-i18n="diag_btn">Abrir diagnóstico</button>
+
+          </div>
+
+          <!-- margin-top:auto lo empuja al fondo de la tarjeta -->
+          <div style="display:flex;justify-content:center;margin-top:auto;padding-top:16px">
+
+            <button class="btn btn-ghost btn-sm" onclick="restartNoted()" data-i18n="diag_restart_btn">Reiniciar Noted</button>
+
+          </div>
+
+        </div>
+
+
+
       </div>
 
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 0 0">
@@ -703,6 +728,42 @@
 
 
 <div class="toast" id="toast"></div>
+
+
+
+<!-- Diagnóstico -->
+
+<div class="task-drawer-backdrop" id="diag-drawer-backdrop" onclick="closeDiagnostics()"></div>
+
+<div class="task-detail-drawer" id="diag-drawer">
+
+  <div class="task-detail-header">
+
+    <span style="font-size:13px;font-weight:700;color:var(--text)" data-i18n="diag_label">Diagnóstico</span>
+
+    <button class="runs-panel-close" onclick="closeDiagnostics()" style="margin-left:auto">×</button>
+
+  </div>
+
+  <div class="task-detail-body" style="gap:18px">
+
+    <div class="diag-verdict" id="diag-verdict"></div>
+
+    <div class="diag-hint" id="diag-hint"></div>
+
+    <div id="diag-rows"></div>
+
+    <div class="drawer-btn-row">
+
+      <button class="btn btn-primary" id="diag-test-btn" onclick="runAudioTest()" data-i18n="diag_test_btn">Probar ahora</button>
+
+    </div>
+
+    <div class="diag-foot" id="diag-foot" data-i18n="diag_foot">La prueba hace sonar un tono y graba a la vez por tu micrófono y por el sonido del ordenador.</div>
+
+  </div>
+
+</div>
 
 
 

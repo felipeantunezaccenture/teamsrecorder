@@ -169,6 +169,53 @@ const T = {
     chat_notice_enabled_label: 'Enviar aviso al iniciar la grabación',
     chat_notice_desc: 'Personaliza el mensaje que se envía al chat de la reunión cuando empieza la grabación.',
     chat_notice_ph: '🔴 This meeting is being recorded for documentation purposes...',
+    diag_label: 'Diagnóstico',
+    diag_desc: 'Comprueba si puedes grabar ahora mismo: el grabador, el vigilante, tu micrófono y el sonido del ordenador. Incluye una prueba que hace sonar un tono y graba para confirmar que funciona.',
+    diag_btn: 'Abrir diagnóstico',
+    diag_error: 'No se pudo hacer el diagnóstico',
+    diag_restart_btn: 'Reiniciar Noted',
+    diag_restart_working: 'Reiniciando Noted… la ventana se cerrará y volverá sola.',
+    diag_restart_blocked: 'Hay una grabación en curso: no se reinicia.',
+    diag_restart_nowd: 'No se pudo arrancar el vigilante, así que no se ha reiniciado (Noted no volvería).',
+    diag_test_btn: 'Probar ahora',
+    diag_test_again: 'Probar otra vez',
+    diag_test_running: 'Probando… habla ahora',
+    diag_test_recording: 'Grabación en curso',
+    diag_test_blocked: 'Hay una grabación en curso: la prueba se ha cancelado',
+    diag_foot: 'La prueba hace sonar un tono y graba a la vez por tu micrófono y por el sonido del ordenador. Habla mientras suena para comprobar tu voz.',
+    dg_sev_ok: 'OK', dg_sev_warn: 'AVISO', dg_sev_bad: 'FALLO',
+    dg_fix_start: 'Arrancarlo', dg_fix_unmute: 'Quitar mute', dg_fix_generic: 'Arreglar',
+    dg_fix_working: 'Un momento…', dg_fix_done: 'Hecho', dg_fix_failed: 'No se pudo arreglar',
+    dg_row_recorder: 'Grabador', dg_row_watchdog: 'Vigilante',
+    dg_row_mic: 'Tu micrófono', dg_row_spk: 'Sonido del PC',
+    dg_st_stopped: 'Parado', dg_st_old: 'Lleva mucho', dg_st_rec_ok: 'Listo para grabar',
+    dg_st_watching: 'Vigilando', dg_st_none: 'No hay', dg_st_muted: 'Silenciado',
+    dg_st_volume: 'Volumen {0}%', dg_st_ready: 'Listo',
+    dg_d_daemon_down: 'No está corriendo: no se grabaría nada',
+    dg_d_uptime: 'Lleva {0} sin reiniciarse',
+    dg_d_uptime_old: 'Lleva {0} sin reiniciarse: conviene reiniciar',
+    dg_d_wd_down: 'Si el grabador se cae, nadie lo levanta',
+    dg_d_wd_ok: 'Lleva {0} cuidando al grabador',
+    dg_d_mic_missing: 'Windows no ve micrófono: no se grabaría tu voz',
+    dg_d_spk_missing: 'Sin salida de audio: no se grabaría a los demás',
+    dg_d_muted: 'Está en mute: se grabaría en silencio',
+    dg_d_vol_low: 'Volumen muy bajo: súbelo antes de la llamada',
+    dg_d_mic_idle: 'Volumen {0}%. Pulsa Probar para comprobar que te capta.',
+    dg_d_spk_idle: 'Volumen {0}%. Pulsa Probar para comprobar que sale sonido.',
+    dg_v_rec_title: 'GRABANDO AHORA MISMO',
+    dg_v_rec_hint: 'Hay una grabación en curso. No reinicies nada.',
+    dg_v_bad_title: 'NO ENTRES A LA LLAMADA',
+    dg_v_bad_hint: 'Algo está roto: la reunión NO se grabaría.',
+    dg_v_warn_title: 'PUEDES GRABAR, CON CUIDADO',
+    dg_v_warn_hint: 'Grabará, pero revisa el aviso de abajo.',
+    dg_v_ok_title: 'TODO LISTO',
+    dg_v_ok_hint: 'Micro, sonido y grabador en orden. Adelante.',
+    dg_test_spk_ok: 'Prueba OK: el tono salió y se captó al {0}',
+    dg_test_spk_bad: 'Prueba: el tono sonó pero no se captó nada. No se grabaría a los demás.',
+    dg_test_spk_cant: 'Prueba: no se pudo capturar el sonido del ordenador',
+    dg_test_mic_ok: 'Prueba OK: te captó al {0}',
+    dg_test_mic_low: 'Prueba: casi no se oye nada ({0}). Con auriculares es normal: vuelve a probar hablando.',
+    dg_test_mic_cant: 'Prueba: no se pudo abrir el micrófono',
     whisper_desc: 'Modelo Whisper para transcribir el audio. Más grande = más preciso pero más lento. Se aplica al reiniciar.',
     open_folder_btn: 'Abrir',
     proj_dir_ph: 'Carpeta del proyecto (opcional)',
@@ -449,6 +496,53 @@ const T = {
     chat_notice_enabled_label: 'Send notice when recording starts',
     chat_notice_desc: 'Customize the message sent to the meeting chat when recording starts.',
     chat_notice_ph: '🔴 This meeting is being recorded for documentation purposes...',
+    diag_label: 'Diagnostics',
+    diag_desc: 'Check whether you can record right now: the recorder, the watchdog, your microphone and the computer sound. Includes a test that plays a tone and records to confirm it works.',
+    diag_btn: 'Open diagnostics',
+    diag_error: 'Could not run the diagnostics',
+    diag_restart_btn: 'Restart Noted',
+    diag_restart_working: 'Restarting Noted… the window will close and come back on its own.',
+    diag_restart_blocked: 'A recording is in progress: not restarting.',
+    diag_restart_nowd: 'Could not start the watchdog, so nothing was restarted (Noted would not come back).',
+    diag_test_btn: 'Test now',
+    diag_test_again: 'Test again',
+    diag_test_running: 'Testing… speak now',
+    diag_test_recording: 'Recording in progress',
+    diag_test_blocked: 'A recording is in progress: the test was cancelled',
+    diag_foot: 'The test plays a tone and records at the same time through your microphone and the computer sound. Speak while it plays to check your voice.',
+    dg_sev_ok: 'OK', dg_sev_warn: 'WARNING', dg_sev_bad: 'FAILED',
+    dg_fix_start: 'Start it', dg_fix_unmute: 'Unmute', dg_fix_generic: 'Fix it',
+    dg_fix_working: 'Working…', dg_fix_done: 'Done', dg_fix_failed: 'Could not fix it',
+    dg_row_recorder: 'Recorder', dg_row_watchdog: 'Watchdog',
+    dg_row_mic: 'Your microphone', dg_row_spk: 'Computer sound',
+    dg_st_stopped: 'Stopped', dg_st_old: 'Running long', dg_st_rec_ok: 'Ready to record',
+    dg_st_watching: 'Watching', dg_st_none: 'Missing', dg_st_muted: 'Muted',
+    dg_st_volume: 'Volume {0}%', dg_st_ready: 'Ready',
+    dg_d_daemon_down: 'Not running: nothing would be recorded',
+    dg_d_uptime: 'Up for {0} without a restart',
+    dg_d_uptime_old: 'Up for {0} without a restart: worth restarting',
+    dg_d_wd_down: 'If the recorder crashes, nothing restarts it',
+    dg_d_wd_ok: 'Watching the recorder for {0}',
+    dg_d_mic_missing: 'Windows sees no microphone: your voice would be lost',
+    dg_d_spk_missing: 'No audio output: the others would not be recorded',
+    dg_d_muted: 'It is muted: the recording would be silent',
+    dg_d_vol_low: 'Volume very low: turn it up before the call',
+    dg_d_mic_idle: 'Volume {0}%. Hit Test to confirm you are picked up.',
+    dg_d_spk_idle: 'Volume {0}%. Hit Test to confirm sound comes out.',
+    dg_v_rec_title: 'RECORDING RIGHT NOW',
+    dg_v_rec_hint: 'A recording is in progress. Do not restart anything.',
+    dg_v_bad_title: 'DO NOT JOIN THE CALL',
+    dg_v_bad_hint: 'Something is broken: the meeting would NOT be recorded.',
+    dg_v_warn_title: 'YOU CAN RECORD, BUT CHECK THIS',
+    dg_v_warn_hint: 'It will record, but read the warning below.',
+    dg_v_ok_title: 'ALL SET',
+    dg_v_ok_hint: 'Mic, sound and recorder are fine. Go ahead.',
+    dg_test_spk_ok: 'Test OK: the tone played and came through at {0}',
+    dg_test_spk_bad: 'Test: the tone played but nothing was captured. The others would not be recorded.',
+    dg_test_spk_cant: 'Test: could not capture the computer sound',
+    dg_test_mic_ok: 'Test OK: you came through at {0}',
+    dg_test_mic_low: 'Test: almost nothing came in ({0}). Normal with a headset: test again while speaking.',
+    dg_test_mic_cant: 'Test: could not open the microphone',
     whisper_desc: 'Whisper model for audio transcription. Larger = more accurate but slower. Takes effect after restart.',
     open_folder_btn: 'Open',
     proj_dir_ph: 'Project folder (optional)',
@@ -728,6 +822,53 @@ const T = {
     chat_notice_enabled_label: 'Enviar avís en iniciar la gravació',
     chat_notice_desc: 'Personalitza el missatge que s\'envia al xat de la reunió quan comença la gravació.',
     chat_notice_ph: '🔴 This meeting is being recorded for documentation purposes...',
+    diag_label: 'Diagnòstic',
+    diag_desc: 'Comprova si pots gravar ara mateix: el gravador, el vigilant, el teu micròfon i el so de l\'ordinador. Inclou una prova que fa sonar un to i grava per confirmar que funciona.',
+    diag_btn: 'Obrir diagnòstic',
+    diag_error: 'No s\'ha pogut fer el diagnòstic',
+    diag_restart_btn: 'Reiniciar Noted',
+    diag_restart_working: 'Reiniciant Noted… la finestra es tancarà i tornarà sola.',
+    diag_restart_blocked: 'Hi ha una gravació en curs: no es reinicia.',
+    diag_restart_nowd: 'No s\'ha pogut arrencar el vigilant, així que no s\'ha reiniciat (Noted no tornaria).',
+    diag_test_btn: 'Provar ara',
+    diag_test_again: 'Tornar a provar',
+    diag_test_running: 'Provant… parla ara',
+    diag_test_recording: 'Gravació en curs',
+    diag_test_blocked: 'Hi ha una gravació en curs: la prova s\'ha cancel·lat',
+    diag_foot: 'La prova fa sonar un to i grava alhora pel teu micròfon i pel so de l\'ordinador. Parla mentre sona per comprovar la teva veu.',
+    dg_sev_ok: 'OK', dg_sev_warn: 'AVÍS', dg_sev_bad: 'FALLA',
+    dg_fix_start: 'Arrencar-lo', dg_fix_unmute: 'Treure el mute', dg_fix_generic: 'Arreglar',
+    dg_fix_working: 'Un moment…', dg_fix_done: 'Fet', dg_fix_failed: 'No s\'ha pogut arreglar',
+    dg_row_recorder: 'Gravador', dg_row_watchdog: 'Vigilant',
+    dg_row_mic: 'El teu micròfon', dg_row_spk: 'So de l\'ordinador',
+    dg_st_stopped: 'Aturat', dg_st_old: 'Fa molt', dg_st_rec_ok: 'A punt per gravar',
+    dg_st_watching: 'Vigilant', dg_st_none: 'No n\'hi ha', dg_st_muted: 'Silenciat',
+    dg_st_volume: 'Volum {0}%', dg_st_ready: 'A punt',
+    dg_d_daemon_down: 'No està funcionant: no es gravaria res',
+    dg_d_uptime: 'Fa {0} que no es reinicia',
+    dg_d_uptime_old: 'Fa {0} que no es reinicia: convé reiniciar',
+    dg_d_wd_down: 'Si el gravador cau, ningú no l\'aixeca',
+    dg_d_wd_ok: 'Fa {0} que cuida el gravador',
+    dg_d_mic_missing: 'Windows no veu cap micròfon: no es gravaria la teva veu',
+    dg_d_spk_missing: 'Sense sortida d\'àudio: no es gravarien els altres',
+    dg_d_muted: 'Està en mute: es gravaria en silenci',
+    dg_d_vol_low: 'Volum molt baix: puja\'l abans de la trucada',
+    dg_d_mic_idle: 'Volum {0}%. Prem Provar per confirmar que et capta.',
+    dg_d_spk_idle: 'Volum {0}%. Prem Provar per confirmar que surt so.',
+    dg_v_rec_title: 'GRAVANT ARA MATEIX',
+    dg_v_rec_hint: 'Hi ha una gravació en curs. No reiniciïs res.',
+    dg_v_bad_title: 'NO ENTRIS A LA TRUCADA',
+    dg_v_bad_hint: 'Alguna cosa està trencada: la reunió NO es gravaria.',
+    dg_v_warn_title: 'POTS GRAVAR, AMB COMPTE',
+    dg_v_warn_hint: 'Gravarà, però revisa l\'avís de sota.',
+    dg_v_ok_title: 'TOT A PUNT',
+    dg_v_ok_hint: 'Micro, so i gravador en ordre. Endavant.',
+    dg_test_spk_ok: 'Prova OK: el to va sortir i es va captar al {0}',
+    dg_test_spk_bad: 'Prova: el to va sonar però no es va captar res. No es gravarien els altres.',
+    dg_test_spk_cant: 'Prova: no s\'ha pogut capturar el so de l\'ordinador',
+    dg_test_mic_ok: 'Prova OK: t\'ha captat al {0}',
+    dg_test_mic_low: 'Prova: gairebé no entra res ({0}). Amb auriculars és normal: torna a provar parlant.',
+    dg_test_mic_cant: 'Prova: no s\'ha pogut obrir el micròfon',
     whisper_desc: 'Model Whisper per transcriure l\'àudio. Més gran = més precís però més lent. S\'aplica en reiniciar.',
     open_folder_btn: 'Obrir',
     proj_dir_ph: 'Carpeta del projecte (opcional)',
@@ -3564,6 +3705,192 @@ async function saveChatNoticeSettings() {
     teams_chat_message: ta?.value ?? '',
   });
   showToast(t('settings_saved'));
+}
+
+// ── Diagnóstico ───────────────────────────────────────────────────────────────
+
+let _diagTimer = null;
+let _diagTest = null;   // resultado de la última prueba activa, por fila
+
+function _diagFmt(s, args) {
+  if (!args || !args.length) return s;
+  return String(s).replace(/\{(\d+)\}/g, (m, i) => (args[i] !== undefined ? args[i] : m));
+}
+
+function _diagPct(v) {
+  const p = v * 100;
+  if (p >= 10) return Math.round(p) + '%';
+  if (p >= 1) return p.toFixed(1) + '%';
+  return p.toFixed(2) + '%';
+}
+
+async function openDiagnostics() {
+  _diagTest = null;
+  document.getElementById('diag-drawer')?.classList.add('open');
+  document.getElementById('diag-drawer-backdrop')?.classList.add('open');
+  await refreshDiagnostics();
+  // Refresco en vivo mientras esté abierto. Es barato: mira procesos y
+  // dispositivos, no lanza nada.
+  clearInterval(_diagTimer);
+  _diagTimer = setInterval(refreshDiagnostics, 3000);
+}
+
+function closeDiagnostics() {
+  clearInterval(_diagTimer);
+  _diagTimer = null;
+  document.getElementById('diag-drawer')?.classList.remove('open');
+  document.getElementById('diag-drawer-backdrop')?.classList.remove('open');
+}
+
+async function refreshDiagnostics() {
+  let d;
+  try {
+    d = await pywebview.api.get_diagnostics();
+  } catch (_) {
+    return;
+  }
+  if (!d || !d.ok) return;
+  renderDiagnostics(d);
+}
+
+function renderDiagnostics(d) {
+  const sevWord = [t('dg_sev_ok'), t('dg_sev_warn'), t('dg_sev_bad')];
+
+  const v = document.getElementById('diag-verdict');
+  if (v) {
+    v.className = 'diag-verdict sev' + d.verdict.sev;
+    v.textContent = t(d.verdict.title_key);
+  }
+  const h = document.getElementById('diag-hint');
+  if (h) h.textContent = t(d.verdict.hint_key);
+
+  const host = document.getElementById('diag-rows');
+  if (host) {
+    host.innerHTML = '';
+    for (const r of d.rows) {
+      // Si se hizo la prueba activa, su resultado manda sobre el estado
+      // pasivo: haber grabado es más fuerte que mirar la configuración.
+      const ov = _diagTest ? _diagTest[r.id] : null;
+      const sev = ov && ov.sev > r.sev ? ov.sev : r.sev;
+      const detail = ov ? ov.text : _diagFmt(t(r.detail_key), r.detail_args);
+      const state = _diagFmt(t(r.state_key), r.state_args);
+
+      const row = document.createElement('div');
+      row.className = 'diag-row';
+      row.innerHTML =
+        `<span class="diag-badge sev${sev}">${escHtml(sevWord[sev])}</span>` +
+        `<div class="diag-row-main">` +
+          `<div class="diag-row-top">` +
+            `<span class="diag-row-name">${escHtml(t('dg_row_' + r.id))}</span>` +
+            `<span class="diag-row-state sev${sev}">${escHtml(state)}</span>` +
+          `</div>` +
+          `<div class="diag-row-detail">${escHtml(detail)}</div>` +
+        `</div>` +
+        // El arreglo se ofrece en la propia fila del problema, no en un menú
+        // aparte: así se ve qué se va a arreglar exactamente.
+        (r.fix ? `<button class="diag-fix-btn">${escHtml(t(r.fix_key || 'dg_fix_generic'))}</button>` : '');
+
+      if (r.fix) {
+        row.querySelector('.diag-fix-btn')
+           .addEventListener('click', () => applyDiagFix(r.fix, row));
+      }
+      host.appendChild(row);
+    }
+  }
+
+  const btn = document.getElementById('diag-test-btn');
+  if (btn) {
+    btn.disabled = !!d.recording;
+    btn.textContent = d.recording
+      ? t('diag_test_recording')
+      : (_diagTest ? t('diag_test_again') : t('diag_test_btn'));
+  }
+}
+
+async function restartNoted() {
+  // Si sale bien, esta misma ventana se cierra en ~1s y el vigilante vuelve a
+  // levantar la app. Por eso el aviso se enseña ANTES de llamar.
+  showToast(t('diag_restart_working'));
+
+  let r;
+  try {
+    r = await pywebview.api.restart_app();
+  } catch (_) {
+    r = null;
+  }
+
+  if (!r || !r.ok) {
+    const key = (r && r.reason === 'recording') ? 'diag_restart_blocked'
+              : (r && r.reason === 'no_watchdog') ? 'diag_restart_nowd'
+              : 'diag_error';
+    showToast(t(key));
+  }
+}
+
+async function applyDiagFix(action, row) {
+  const btn = row && row.querySelector('.diag-fix-btn');
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('dg_fix_working'); }
+
+  // Se pausa el refresco: si saltara a mitad, repintaría la fila y se llevaría
+  // por delante el botón que el usuario acaba de pulsar.
+  clearInterval(_diagTimer);
+  _diagTimer = null;
+
+  let r;
+  try {
+    r = await pywebview.api.apply_diagnostic_fix(action);
+  } catch (_) {
+    r = null;
+  }
+
+  if (!r || !r.ok) {
+    showToast(`${t('dg_fix_failed')}${r && r.error ? ': ' + r.error : ''}`);
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  } else {
+    showToast(t('dg_fix_done'));
+  }
+
+  // Arrancar el vigilante tarda un momento en verse como proceso.
+  setTimeout(refreshDiagnostics, 1400);
+  _diagTimer = setInterval(refreshDiagnostics, 3000);
+}
+
+async function runAudioTest() {
+  const btn = document.getElementById('diag-test-btn');
+  if (btn) { btn.disabled = true; btn.textContent = t('diag_test_running'); }
+
+  let r;
+  try {
+    r = await pywebview.api.run_audio_test();
+  } catch (_) {
+    r = null;
+  }
+
+  if (!r || !r.ok) {
+    showToast(r && r.reason === 'recording' ? t('diag_test_blocked') : t('diag_error'));
+  } else {
+    _diagTest = {};
+
+    // Sonido del PC: el loopback es concluyente. Si el tono salió por los
+    // altavoces, la captura lo recoge; si no, no habría voces de los demás.
+    _diagTest.spk = (r.loop_peak < 0)
+      ? { sev: 2, text: t('dg_test_spk_cant') }
+      : (r.loop_peak <= 0.005
+          ? { sev: 2, text: t('dg_test_spk_bad') }
+          : { sev: 0, text: _diagFmt(t('dg_test_spk_ok'), [_diagPct(r.loop_peak)]) });
+
+    // Micrófono: el silencio NO demuestra avería (un micro sano en una sala
+    // callada da casi cero), así que solo es fallo si no se pudo abrir.
+    _diagTest.mic = (r.mic_peak < 0)
+      ? { sev: 2, text: t('dg_test_mic_cant') }
+      : (r.mic_peak >= 0.02
+          ? { sev: 0, text: _diagFmt(t('dg_test_mic_ok'), [_diagPct(r.mic_peak)]) }
+          : { sev: 1, text: _diagFmt(t('dg_test_mic_low'), [_diagPct(r.mic_peak)]) });
+  }
+
+  await refreshDiagnostics();
+  if (btn) btn.disabled = false;
 }
 
 async function saveWhisperModel(model) {

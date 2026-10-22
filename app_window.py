@@ -377,6 +377,47 @@ class AppAPI:
         subprocess.Popen(['explorer', '/select,', dest])
         return {'ok': True, 'path': dest}
 
+    def get_diagnostics(self) -> dict:
+        """Estado del diagnostico para el panel de Settings.
+
+        Devuelve claves i18n, no textos: los traduce la UI con su propio
+        diccionario. Es barato, asi que la UI puede refrescarlo en bucle.
+        """
+        try:
+            import diagnostics
+            return {'ok': True, **diagnostics.collect()}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)}
+
+    def restart_app(self) -> dict:
+        """Reinicia Noted. Se asegura antes de que haya vigilante que lo
+        vuelva a levantar: si no, la app no volveria."""
+        try:
+            import diagnostics
+            return diagnostics.restart_app()
+        except Exception as e:
+            return {'ok': False, 'reason': 'error', 'error': str(e)}
+
+    def apply_diagnostic_fix(self, action: str) -> dict:
+        """Ejecuta el arreglo que ofrece una fila del diagnostico."""
+        try:
+            import diagnostics
+            return diagnostics.apply_fix(action)
+        except Exception as e:
+            return {'ok': False, 'error': str(e)}
+
+    def run_audio_test(self) -> dict:
+        """Suena un tono y graba por microfono y por loopback a la vez.
+
+        Bloquea un par de segundos: es una grabacion real, que es lo unico
+        que demuestra que una reunion se grabaria.
+        """
+        try:
+            import diagnostics
+            return diagnostics.run_audio_test()
+        except Exception as e:
+            return {'ok': False, 'reason': 'error', 'error': str(e)}
+
     def get_meetings(self) -> list:
 
         """Lista todas las minutas agrupadas por fecha, con conteo de pendientes."""
