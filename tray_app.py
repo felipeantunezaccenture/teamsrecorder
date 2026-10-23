@@ -257,6 +257,13 @@ class TrayApp:
                 jobs[-1]['rec_stem'] = rec_path.stem
                 if rec_path.stem in self._live:
                     jobs[-1]['live_stem'] = rec_path.stem
+                    # El estado del proceso de la reunion (p. ej. esperando
+                    # memoria), para que el panel diga por que no avanza.
+                    try:
+                        import live_transcriber
+                        jobs[-1]['live_state'] = live_transcriber.read_status(rec_path).get('state')
+                    except Exception:
+                        pass
         if self._processing_msg:
             pct_m = _re.search(r'(\d+)%', self._processing_msg)
             job = {'stage': 'processing', 'label': self._processing_msg, 'pct': int(pct_m.group(1)) if pct_m else None}

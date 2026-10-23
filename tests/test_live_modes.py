@@ -444,6 +444,16 @@ def test_el_estado_dice_el_modo_y_el_stem_de_la_grabacion(grabando, tr_dirs):
     assert 'stem' not in job
 
 
+def test_el_estado_dice_si_el_proceso_de_fondo_espera_memoria(grabando, wav, tr_dirs):
+    """23/10/2026: el proceso de fondo espero memoria toda una llamada de 30 min
+    y el panel no lo decia en ningun sitio."""
+    grabando._live[wav.stem] = (Proc(), wav)
+    lt._write_status(wav, state='waiting_memory', free_mb=3152, need_mb=6024)
+    grabando._write_status()
+    job = json.loads((tr_dirs / '.pipeline_status.json').read_text(encoding='utf-8'))['jobs'][0]
+    assert job['live_state'] == 'waiting_memory'
+
+
 def test_reconexion_sigue_en_el_modo_de_la_parte_anterior(tray, wav, live_spawns):
     tray.set_recording(True, wav, mode='live')
     tray.set_recording(False)
@@ -690,6 +700,30 @@ def test_en_vivo_trabaja_con_prioridad_normal_y_fuera_del_modo_eficiencia(proces
     assert proceso.eficiencia == [1]
 
 
+def test_sin_memoria_lo_dice_en_el_log_y_en_el_estado(proceso, wav, monkeypatch, caplog):
+    """23/10/2026: esperaba en silencio una llamada entera. Ahora lo dice, con
+    cuanta reserva hay y cuanta falta."""
+    import logging
+    caplog.set_level(logging.INFO, logger='live_transcriber')
+    monkeypatch.setattr(lt, '_memory_ok', lambda _n: False)
+    monkeypatch.setattr(lt, '_mem_status', lambda: (6216.0, 3152.0))
+    proceso.partes(5)
+    lt.write_ctl(wav, mode='background', gate='free')
+    proceso.arrancar()
+    assert proceso.hasta(lambda: lt.read_status(wav).get('state') == 'waiting_memory')
+    st = lt.read_status(wav)
+    assert st['free_mb'] == 3152 and st['need_mb'] == lt._MODEL_COMMIT_MB['medium'] + lt.COMMIT_MARGIN_MB
+    assert proceso.hasta(lambda: 'sin memoria para cargar' in caplog.text)
+    assert not proceso.cargando.is_set()
+
+
+def test_el_margen_de_memoria_es_de_1_gb():
+    """Decision del 23/10/2026: con 2 GB, en el portatil de Felipe el modo de
+    fondo no cargaba 'medium' en toda una llamada."""
+    assert lt.COMMIT_MARGIN_MB == 1024
+    assert lt.COMMIT_FLOOR_MB <= lt.COMMIT_MARGIN_MB
+
+
 def test_de_fondo_sigue_cediendo_con_la_prioridad_minima():
     assert lt._work_priority(lt.MODE_BACKGROUND) == 'idle'
     assert lt._work_priority(lt.MODE_LIVE) == 'normal'
@@ -704,20 +738,34 @@ def test_salir_del_modo_eficiencia_usa_la_api_documentada(monkeypatch):
     vistos = []
 
     class K32:
-        def GetCurrentProcess(self):
-            return -1
-
         def SetProcessInformation(self, handle, clase, ref, size):
             st = ref._obj
-            vistos.append((clase, st.Version, st.ControlMask, st.StateMask, size))
+            # El handle tiene que viajar como HANDLE de 64 bits: un int de
+            # Python se pasaba truncado a 32 y Windows daba ERROR_INVALID_HANDLE.
+            vistos.append((isinstance(handle, ctypes.c_void_p), clase, st.Version, st.ControlMask,
+                           st.StateMask, size))
             return 1
 
     import win_power
     monkeypatch.setattr(win_power, '_done', False)
     monkeypatch.setattr(ctypes, 'windll', types.SimpleNamespace(kernel32=K32()))
     assert lt._opt_out_of_efficiency_mode() is True
-    assert vistos == [(4, 1, 1, 0, 12)]
+    assert vistos == [(True, 4, 1, 1, 0, 12)]
     assert lt._opt_out_of_efficiency_mode() is True and len(vistos) == 1, "una vez por proceso"
+
+
+def test_salir_del_modo_eficiencia_funciona_con_el_windows_de_verdad(monkeypatch):
+    """23/10/2026: el arreglo del 20/10 nunca funciono en produccion. El log
+    decia "No se pudo sacar el proceso del modo de eficiencia" (GetLastError 6,
+    ERROR_INVALID_HANDLE): GetCurrentProcess devolvia un handle que ctypes
+    recortaba a 32 bits. El test anterior, con la API simulada, no podia verlo.
+    Este llama a la de verdad (sobre el propio proceso de pytest: inocuo)."""
+    import ctypes
+    if not hasattr(ctypes, 'windll'):
+        pytest.skip('solo Windows')
+    import win_power
+    monkeypatch.setattr(win_power, '_done', False)
+    assert win_power.opt_out_of_efficiency_mode() is True, f"GetLastError {ctypes.GetLastError()}"
 
 
 def test_en_vivo_a_mitad_se_lanza_ya_y_desde_ahora(wav, monkeypatch):

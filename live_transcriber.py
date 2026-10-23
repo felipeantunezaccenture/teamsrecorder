@@ -104,7 +104,12 @@ LANG_FALLBACK_AFTER_S = 180
 # llenar el disco, y con el disco lleno el grabador falla a mitad de reunion.
 _MODEL_COMMIT_MB = {'tiny': 400, 'base': 600, 'small': 1500, 'medium': 5000,
                     'large': 10000, 'large-v2': 10000, 'large-v3': 10000}
-COMMIT_MARGIN_MB = 2048
+# 1 GB y no 2 (decision del 23/10/2026): con 2 GB, en el portatil de Felipe
+# (43 de 46 GB de reserva comprometidos con sus apps abiertas) el modo de fondo
+# no llego a cargar 'medium' en toda una llamada de 30 min. Sigue quedando
+# 1 GB libre tras cargar, y COMMIT_FLOOR_MB lo suelta si baja de ahi.
+COMMIT_MARGIN_MB = 1024
+WAITING_LOG_EVERY_S = 300
 RAM_MARGIN_MB = 1024
 COMMIT_FLOOR_MB = 1024
 
@@ -518,6 +523,13 @@ def _memory_ok(name: str) -> bool:
     return commit >= need_commit and ram >= need_ram
 
 
+def _commit_free_and_need(name: str) -> tuple[int | None, int]:
+    """(reserva libre, reserva que hace falta) en MB, para avisar de la espera."""
+    st = _mem_status()
+    need = _MODEL_COMMIT_MB.get(name, 5000) + COMMIT_MARGIN_MB
+    return (int(st[1]) if st else None), need
+
+
 def _memory_floor_ok() -> bool:
     """Con el modelo ya cargado: que quede un minimo de reserva para el resto."""
     st = _mem_status()
@@ -758,6 +770,7 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
     vad_opts = VadOptions(threshold=0.3, min_silence_duration_ms=500, speech_pad_ms=0)
 
     mode = model = model_name = None
+    waiting_logged = -WAITING_LOG_EVERY_S        # el primer aviso de memoria sale ya
     last_ctl, ctl = 0.0, read_ctl(wav)
 
     def current_ctl():
@@ -829,9 +842,17 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
         if model is None:
             name = _model_for(mode)
             if not _memory_ok(name):
-                _write_status(wav, state='waiting_memory')
+                # Antes esperaba en silencio: el 23/10 paso una llamada entera
+                # sin transcribir nada y sin que nadie lo supiera.
+                free_mb, need_mb = _commit_free_and_need(name)
+                if time.monotonic() - waiting_logged >= WAITING_LOG_EVERY_S:
+                    log.info(f"live: sin memoria para cargar '{name}': reserva libre {free_mb} MB, "
+                             f"hacen falta {need_mb} MB; espero (se transcribira al colgar)")
+                    waiting_logged = time.monotonic()
+                _write_status(wav, state='waiting_memory', free_mb=free_mb, need_mb=need_mb)
                 time.sleep(5)
                 continue
+            waiting_logged = -WAITING_LOG_EVERY_S
             # Antes de cargar, no despues: mientras carga (hasta un minuto), un
             # 'yielded' anterior diria que no tiene modelo.
             _write_status(wav, state='loading', mode=mode, model=name)

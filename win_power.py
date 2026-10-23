@@ -35,10 +35,14 @@ def opt_out_of_efficiency_mode() -> bool:
                         ('StateMask', wintypes.ULONG)]
 
         state = PROCESS_POWER_THROTTLING_STATE(1, 0x1, 0)   # version 1, EXECUTION_SPEED, apagado
-        k32 = ctypes.windll.kernel32
+        # El pseudo-handle del proceso actual, (HANDLE)-1, como HANDLE de 64 bits.
+        # Antes se pasaba k32.GetCurrentProcess(): sin restype, ctypes lo recorta
+        # a un int de 32 bits y Windows devuelve ERROR_INVALID_HANDLE (23/10/2026:
+        # el arreglo del 20/10 nunca llego a funcionar en produccion).
+        current_process = wintypes.HANDLE(-1)
         process_power_throttling = 4                        # PROCESS_INFORMATION_CLASS
-        _done = bool(k32.SetProcessInformation(k32.GetCurrentProcess(), process_power_throttling,
-                                               ctypes.byref(state), ctypes.sizeof(state)))
+        _done = bool(ctypes.windll.kernel32.SetProcessInformation(
+            current_process, process_power_throttling, ctypes.byref(state), ctypes.sizeof(state)))
         return _done
     except Exception:
         return False
