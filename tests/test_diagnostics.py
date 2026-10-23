@@ -22,6 +22,10 @@ Todos son `unit`: ni COM, ni dispositivos, ni subprocess, ni procesos reales.
 Lo que toca el sistema de verdad (`_endpoint`, `_start_watchdog`, `_procs`)
 esta sustituido en cada test.
 """
+import sys
+import types
+
+import numpy as np
 import pytest
 
 import diagnostics
@@ -329,3 +333,432 @@ def test_kill_daemon_mata_los_hijos_antes_que_los_padres(monkeypatch):
 @pytest.mark.unit
 def test_kill_daemon_no_explota_si_no_hay_nada_que_matar(monkeypatch, todo_parado):
     diagnostics._kill_daemon()      # no debe lanzar
+
+
+# ── El COM de audio ───────────────────────────────────────────────────────────
+#
+# Los imports de pycaw/comtypes estan DENTRO de las funciones, asi que basta
+# con dejar modulos de mentira en sys.modules antes de llamarlas. Sin esto
+# estos tests hablarian con el audio real de la maquina, que es exactamente lo
+# que la marca `unit` prohibe.
+
+class VolumenFalso:
+    def __init__(self, mute=0, escalar=0.42):
+        self.mute, self.escalar = mute, escalar
+        self.set_mute_calls = []
+
+    def GetMute(self):
+        return self.mute
+
+    def GetMasterVolumeLevelScalar(self):
+        return self.escalar
+
+    def SetMute(self, valor, ctx):
+        self.set_mute_calls.append((valor, ctx))
+
+
+@pytest.fixture
+def pycaw_falso(monkeypatch):
+    volumen = VolumenFalso()
+    pedidos = []
+
+    class Iface:
+        def QueryInterface(self, _cls):
+            return volumen
+
+    class Dispositivo:
+        def Activate(self, _iid, _ctx, _params):
+            return Iface()
+
+    class Enumerador:
+        def GetDefaultAudioEndpoint(self, flow, role):
+            pedidos.append((flow, role))
+            return Dispositivo()
+
+    class AudioUtilities:
+        @staticmethod
+        def GetDeviceEnumerator():
+            return Enumerador()
+
+    comtypes = types.ModuleType('comtypes')
+    comtypes.CLSCTX_ALL = 23
+    paquete = types.ModuleType('pycaw')
+    modulo = types.ModuleType('pycaw.pycaw')
+    modulo.AudioUtilities = AudioUtilities
+    modulo.IAudioEndpointVolume = type('IAudioEndpointVolume', (), {'_iid_': 'iid'})
+    paquete.pycaw = modulo
+
+    monkeypatch.setitem(sys.modules, 'comtypes', comtypes)
+    monkeypatch.setitem(sys.modules, 'pycaw', paquete)
+    monkeypatch.setitem(sys.modules, 'pycaw.pycaw', modulo)
+
+    return types.SimpleNamespace(volumen=volumen, pedidos=pedidos)
+
+
+@pytest.mark.unit
+def test_endpoint_pide_captura_para_el_micro_y_render_para_la_salida(pycaw_falso):
+    """El flujo no es cosmetico: pedir el flujo equivocado devuelve el
+    dispositivo equivocado y la fila entera miente."""
+    diagnostics._endpoint('mic')
+    diagnostics._endpoint('spk')
+
+    flujos = [flow for flow, _role in pycaw_falso.pedidos]
+    assert flujos == [1, 0]          # 1 = captura, 0 = render
+
+
+@pytest.mark.unit
+def test_endpoint_convierte_el_escalar_a_porcentaje(pycaw_falso):
+    pycaw_falso.volumen.escalar = 0.9
+    assert diagnostics._endpoint('spk') == {'found': True, 'muted': False, 'volume': 90}
+
+
+@pytest.mark.unit
+def test_endpoint_reporta_el_mute(pycaw_falso):
+    pycaw_falso.volumen.mute = 1
+    assert diagnostics._endpoint('mic')['muted'] is True
+
+
+@pytest.mark.unit
+def test_endpoint_no_propaga_los_fallos_de_com(monkeypatch):
+    """COM falla de formas creativas. El panel debe decir "no hay" y seguir,
+    nunca tumbar la ventana entera."""
+    def revienta(_kind):
+        raise OSError('CoInitialize no llamado')
+
+    monkeypatch.setattr(diagnostics, '_endpoint_volume', revienta)
+    assert diagnostics._endpoint('mic') == {'found': False}
+
+
+@pytest.mark.unit
+def test_endpoint_sin_dispositivo_devuelve_no_encontrado(monkeypatch):
+    monkeypatch.setattr(diagnostics, '_endpoint_volume', lambda _k: None)
+    assert diagnostics._endpoint('spk') == {'found': False}
+
+
+@pytest.mark.unit
+def test_quitar_el_mute_actua_sobre_el_dispositivo(pycaw_falso):
+    assert diagnostics.apply_fix('unmute_mic') == {'ok': True}
+    assert pycaw_falso.volumen.set_mute_calls == [(0, None)]
+
+
+@pytest.mark.unit
+def test_quitar_el_mute_avisa_si_no_hay_dispositivo(monkeypatch):
+    monkeypatch.setattr(diagnostics, '_endpoint_volume', lambda _k: None)
+    res = diagnostics.apply_fix('unmute_spk')
+    assert res['ok'] is False
+
+
+# ── Arranque del vigilante ────────────────────────────────────────────────────
+
+@pytest.mark.unit
+def test_start_watchdog_lanza_el_script_oculto(monkeypatch, tr_dirs):
+    """Sin -WindowStyle Hidden le aparece al usuario una consola negra en
+    mitad de la pantalla cada vez que pulsa el boton."""
+    (tr_dirs / 'watchdog.ps1').write_text('# de mentira', encoding='utf-8')
+    llamadas = []
+    monkeypatch.setattr(diagnostics.subprocess, 'Popen',
+                        lambda cmd, **kw: llamadas.append((cmd, kw)))
+
+    assert diagnostics._start_watchdog() == {'ok': True}
+
+    cmd, kw = llamadas[0]
+    assert cmd[0] == 'powershell'
+    assert 'Hidden' in cmd
+    assert str(tr_dirs / 'watchdog.ps1') in cmd
+    assert kw['cwd'] == str(tr_dirs)
+
+
+@pytest.mark.unit
+def test_start_watchdog_avisa_si_falta_el_script(tr_dirs):
+    """Una instalacion a medias no debe acabar en un Popen que falla raro."""
+    res = diagnostics._start_watchdog()
+    assert res['ok'] is False
+    assert 'watchdog.ps1' in res['error']
+
+
+@pytest.mark.unit
+def test_start_watchdog_captura_el_fallo_al_lanzar(monkeypatch, tr_dirs):
+    (tr_dirs / 'watchdog.ps1').write_text('# de mentira', encoding='utf-8')
+
+    def revienta(*_a, **_k):
+        raise OSError('politica de ejecucion')
+
+    monkeypatch.setattr(diagnostics.subprocess, 'Popen', revienta)
+
+    res = diagnostics._start_watchdog()
+    assert res['ok'] is False
+    assert 'politica de ejecucion' in res['error']
+
+
+# ── Captura loopback ──────────────────────────────────────────────────────────
+
+def _modulo_pyaudio(dispositivos, abre=True, hay_wasapi=True):
+    """Modulo pyaudiowpatch de mentira con la forma que usa _Loopback."""
+    mod = types.ModuleType('pyaudiowpatch')
+    mod.paWASAPI, mod.paFloat32, mod.paContinue = 13, 1, 0
+    mod.ultima = None
+
+    class Stream:
+        def __init__(self):
+            self.arrancado = self.parado = self.cerrado = False
+
+        def start_stream(self):
+            self.arrancado = True
+
+        def stop_stream(self):
+            self.parado = True
+
+        def close(self):
+            self.cerrado = True
+
+    class PyAudio:
+        def __init__(self):
+            self.terminado = False
+            self.callback = None
+            self.stream = None
+            self.abiertos = []
+            mod.ultima = self
+
+        def get_host_api_info_by_type(self, _t):
+            if not hay_wasapi:
+                raise OSError('sin WASAPI')
+            return {'defaultOutputDevice': 0}
+
+        def get_device_info_by_index(self, i):
+            return dispositivos[i]
+
+        def get_device_count(self):
+            return len(dispositivos)
+
+        def open(self, **kw):
+            self.abiertos.append(kw['input_device_index'])
+            if not abre:
+                raise OSError('dispositivo ocupado')
+            self.callback = kw['stream_callback']
+            self.stream = Stream()
+            return self.stream
+
+        def terminate(self):
+            self.terminado = True
+
+    mod.PyAudio = PyAudio
+    return mod
+
+
+def _dispositivo(nombre, loopback, canales=2, indice=0):
+    return {'name': nombre, 'isLoopbackDevice': loopback, 'maxInputChannels': canales,
+            'defaultSampleRate': 48000, 'index': indice}
+
+
+@pytest.mark.unit
+def test_loopback_mide_el_pico_de_lo_que_suena(monkeypatch):
+    """El pico es la prueba de que SALE sonido: es lo que distingue "configurado
+    bien" de "se grabaria de verdad"."""
+    mod = _modulo_pyaudio([_dispositivo('Altavoces (loopback)', True)])
+    monkeypatch.setitem(sys.modules, 'pyaudiowpatch', mod)
+
+    loop = diagnostics._Loopback()
+    assert loop.start() is True
+
+    muestras = np.array([0.0, 0.31, -0.5, 0.2], dtype=np.float32)
+    mod.ultima.callback(muestras.tobytes(), len(muestras), None, None)
+
+    assert loop.stop() == pytest.approx(0.5)
+    assert mod.ultima.terminado is True
+
+
+@pytest.mark.unit
+def test_loopback_busca_otro_dispositivo_si_la_salida_no_es_loopback(monkeypatch):
+    """La salida por defecto casi nunca es ya un loopback: hay que encontrar
+    su gemelo, y por eso el worker del repo hace la misma busqueda."""
+    dispositivos = [
+        _dispositivo('Jabra EVOLVE 20', False, indice=0),
+        _dispositivo('Otra cosa (loopback)', True, indice=1),
+        _dispositivo('Jabra EVOLVE 20 (loopback)', True, indice=2),
+    ]
+    mod = _modulo_pyaudio(dispositivos)
+    monkeypatch.setitem(sys.modules, 'pyaudiowpatch', mod)
+
+    assert diagnostics._Loopback().start() is True
+    # El gemelo del dispositivo activo va PRIMERO, antes que cualquier otro.
+    assert mod.ultima.abiertos[0] == 2
+
+
+@pytest.mark.unit
+def test_loopback_se_rinde_sin_romper_si_no_hay_wasapi(monkeypatch):
+    mod = _modulo_pyaudio([], hay_wasapi=False)
+    monkeypatch.setitem(sys.modules, 'pyaudiowpatch', mod)
+
+    loop = diagnostics._Loopback()
+    assert loop.start() is False
+    assert loop.ok is False
+
+
+@pytest.mark.unit
+def test_loopback_se_rinde_si_ningun_dispositivo_abre(monkeypatch):
+    mod = _modulo_pyaudio([_dispositivo('Altavoces (loopback)', True)], abre=False)
+    monkeypatch.setitem(sys.modules, 'pyaudiowpatch', mod)
+
+    assert diagnostics._Loopback().start() is False
+    assert mod.ultima.terminado is True
+
+
+@pytest.mark.unit
+def test_loopback_sin_la_libreria_no_rompe_el_panel(monkeypatch):
+    """pyaudiowpatch puede no estar: el diagnostico debe seguir dando el resto."""
+    monkeypatch.setitem(sys.modules, 'pyaudiowpatch', None)
+    assert diagnostics._Loopback().start() is False
+
+
+# ── La prueba activa de audio ─────────────────────────────────────────────────
+
+class LoopbackFalso:
+    def __init__(self, pico=0.4, ok=True):
+        self.peak, self.ok = pico, ok
+        self.parado = False
+
+    def start(self):
+        return self.ok
+
+    def stop(self):
+        self.parado = True
+        return self.peak
+
+
+@pytest.fixture
+def sounddevice_falso(monkeypatch):
+    grabado = {'datos': np.array([[0.0], [0.25], [-0.6]], dtype=np.float32)}
+
+    mod = types.ModuleType('sounddevice')
+    mod.llamadas = []
+
+    def playrec(datos, samplerate, channels, dtype):
+        mod.llamadas.append((len(datos), samplerate, channels, dtype))
+        if isinstance(grabado['datos'], Exception):
+            raise grabado['datos']
+        return grabado['datos']
+
+    mod.playrec = playrec
+    mod.wait = lambda: None
+    mod.stop = lambda: None
+
+    monkeypatch.setitem(sys.modules, 'sounddevice', mod)
+    return types.SimpleNamespace(mod=mod, grabado=grabado)
+
+
+@pytest.mark.unit
+def test_la_prueba_mide_los_dos_caminos_que_usa_noted(monkeypatch, sounddevice_falso):
+    """Micro Y loopback: una reunion necesita los dos, y que uno vaya no dice
+    nada del otro."""
+    monkeypatch.setattr(diagnostics, '_is_recording', lambda: False)
+    monkeypatch.setattr(diagnostics, '_Loopback', lambda: LoopbackFalso(pico=0.4))
+
+    res = diagnostics.run_audio_test(seconds=0.1)
+
+    assert res['ok'] is True
+    assert res['mic_peak'] == pytest.approx(0.6)
+    assert res['loop_peak'] == pytest.approx(0.4)
+
+
+@pytest.mark.unit
+def test_la_prueba_distingue_no_poder_grabar_de_grabar_silencio(monkeypatch, sounddevice_falso):
+    """-1 (no se pudo abrir) y 0 (se abrio y no entro nada) son diagnosticos
+    distintos: el primero es una averia, el segundo puede ser una sala callada."""
+    monkeypatch.setattr(diagnostics, '_is_recording', lambda: False)
+    monkeypatch.setattr(diagnostics, '_Loopback', lambda: LoopbackFalso(ok=False))
+    sounddevice_falso.grabado['datos'] = OSError('micro ocupado')
+
+    res = diagnostics.run_audio_test(seconds=0.1)
+
+    assert res['mic_peak'] == -1.0
+    assert res['loop_peak'] == -1.0
+
+
+@pytest.mark.unit
+def test_la_prueba_no_abre_el_micro_en_mitad_de_una_reunion(monkeypatch):
+    """Abrir el micro mientras se graba es justo lo que no se puede hacer."""
+    monkeypatch.setattr(diagnostics, '_is_recording', lambda: True)
+    llamadas = []
+    monkeypatch.setattr(diagnostics, '_Loopback',
+                        lambda: llamadas.append('arrancado') or LoopbackFalso())
+
+    assert diagnostics.run_audio_test() == {'ok': False, 'reason': 'recording'}
+    assert llamadas == []
+
+
+@pytest.mark.unit
+def test_la_prueba_avisa_si_faltan_las_librerias(monkeypatch):
+    monkeypatch.setattr(diagnostics, '_is_recording', lambda: False)
+    monkeypatch.setitem(sys.modules, 'sounddevice', None)
+
+    res = diagnostics.run_audio_test()
+    assert res['ok'] is False
+    assert res['reason'] == 'deps'
+
+
+# ── El puente con la UI ───────────────────────────────────────────────────────
+#
+# Los cuatro metodos de AppAPI son finos a proposito, pero tienen un trabajo
+# que no es trivial: NO dejar escapar una excepcion. Si una sube, cruza el
+# puente de pywebview y la promesa de JavaScript se queda colgada para siempre,
+# con el panel en blanco y sin ningun error visible.
+
+@pytest.mark.unit
+@pytest.mark.parametrize('metodo, funcion, args', [
+    ('get_diagnostics', 'collect', ()),
+    ('run_audio_test', 'run_audio_test', ()),
+    ('apply_diagnostic_fix', 'apply_fix', ('start_watchdog',)),
+    ('restart_app', 'restart_app', ()),
+])
+def test_la_api_nunca_deja_escapar_una_excepcion(monkeypatch, metodo, funcion, args):
+    import app_window
+
+    def revienta(*_a, **_k):
+        raise RuntimeError('COM se murio')
+
+    monkeypatch.setattr(diagnostics, funcion, revienta)
+
+    res = getattr(app_window.AppAPI(), metodo)(*args)
+
+    assert res['ok'] is False
+    assert 'COM se murio' in res['error']
+
+
+@pytest.mark.unit
+def test_la_api_devuelve_el_estado_con_ok(monkeypatch):
+    import app_window
+
+    monkeypatch.setattr(diagnostics, 'collect',
+                        lambda: {'rows': [], 'verdict': {'sev': 0}, 'recording': False})
+
+    res = app_window.AppAPI().get_diagnostics()
+
+    assert res['ok'] is True
+    assert res['verdict'] == {'sev': 0}
+
+
+@pytest.mark.unit
+def test_la_api_pasa_la_accion_tal_cual(monkeypatch):
+    """Si la API reinterpretara la accion, el rechazo de acciones desconocidas
+    de apply_fix dejaria de valer para nada."""
+    import app_window
+
+    recibidas = []
+    monkeypatch.setattr(diagnostics, 'apply_fix',
+                        lambda a: recibidas.append(a) or {'ok': True})
+
+    app_window.AppAPI().apply_diagnostic_fix('unmute_mic')
+
+    assert recibidas == ['unmute_mic']
+
+
+@pytest.mark.unit
+def test_la_api_reenvia_el_motivo_del_rechazo(monkeypatch):
+    """La UI distingue "hay grabacion" de "no hay vigilante" para decir cosas
+    distintas: si se pierde el motivo, los dos quedan en un error generico."""
+    import app_window
+
+    monkeypatch.setattr(diagnostics, 'restart_app',
+                        lambda: {'ok': False, 'reason': 'no_watchdog'})
+
+    assert app_window.AppAPI().restart_app()['reason'] == 'no_watchdog'
