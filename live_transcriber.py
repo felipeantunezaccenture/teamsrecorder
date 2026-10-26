@@ -536,6 +536,36 @@ def _memory_floor_ok() -> bool:
     return st is None or st[1] >= COMMIT_FLOOR_MB
 
 
+# La reserva de memoria no basta: con el pagefile gestionado por Windows, el tope
+# de reserva sube cuando el pagefile crece en el disco. El 26/10/2026 a las 15:56
+# 'medium' cargo porque el pagefile acababa de crecer, y a las 16:06 el disco
+# estaba lleno y la grabacion de la reunion siguiente perdio 11 min. Grabar va
+# antes que transcribir durante la reunion: con poco disco el modelo no se carga
+# (o se suelta) y la reunion se transcribe al colgar.
+DISK_FLOOR_GB = 2.0
+
+
+def _disk_free_and_need(name: str) -> tuple[float | None, float]:
+    """(GB libres en el disco del sistema, GB que pide la reserva del modelo).
+    Nunca menos que el suelo con margen: con 'base' o 'tiny' (1,4-1,6 GB) se
+    cargaria y se soltaria en cada vuelta entre 1,6 y 2 GB libres."""
+    import disk_guard
+    need = max((_MODEL_COMMIT_MB.get(name, 5000) + COMMIT_MARGIN_MB) / 1024, DISK_FLOOR_GB + 0.5)
+    return disk_guard.system_free_gb(), need
+
+
+def _disk_ok(name: str) -> bool:
+    """Hay disco para que el pagefile absorba la reserva del modelo si crece."""
+    free, need = _disk_free_and_need(name)
+    return free is None or free >= need
+
+
+def _disk_floor_ok() -> bool:
+    import disk_guard
+    free = disk_guard.system_free_gb()
+    return free is None or free >= DISK_FLOOR_GB
+
+
 def _work_priority(mode: str) -> str:
     """La prioridad para transcribir. En vivo, normal: medido el 20/10/2026 en
     una reunion real, con 'below' Windows lo trataba como proceso en segundo
@@ -815,6 +845,11 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
             log.warning("live: reserva de memoria por debajo del minimo; descargo el modelo y espero")
             model = None
             gc.collect()
+        if model is not None and not _disk_floor_ok():
+            log.warning(f"live: menos de {DISK_FLOOR_GB:g} GB libres en disco; descargo el modelo "
+                        f"para que la grabacion siga (se transcribira al colgar)")
+            model = None
+            gc.collect()
 
         c = current_ctl()
         if c['mode'] != mode:
@@ -850,6 +885,16 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
                              f"hacen falta {need_mb} MB; espero (se transcribira al colgar)")
                     waiting_logged = time.monotonic()
                 _write_status(wav, state='waiting_memory', free_mb=free_mb, need_mb=need_mb)
+                time.sleep(5)
+                continue
+            if not _disk_ok(name):
+                free_gb, need_gb = _disk_free_and_need(name)
+                if time.monotonic() - waiting_logged >= WAITING_LOG_EVERY_S:
+                    log.info(f"live: sin disco para cargar '{name}': {free_gb:.1f} GB libres, "
+                             f"hacen falta {need_gb:.1f} GB; espero (se transcribira al colgar)")
+                    waiting_logged = time.monotonic()
+                _write_status(wav, state='waiting_disk', free_gb=round(free_gb, 1),
+                              need_gb=round(need_gb, 1))
                 time.sleep(5)
                 continue
             waiting_logged = -WAITING_LOG_EVERY_S
@@ -994,10 +1039,13 @@ def child_usable(wav: Path, proc=None) -> bool:
     memoria no: el pipeline no debe pausarse esperandolo. 'yielded' si: en modo en
     vivo solo dura los segundos que tarda en enterarse del cambio (el .ctl se
     escribe entero y, si no se puede, no se cambia de modo), y contarlo como no
-    usable dejaba al pipeline cargar 'medium' justo en esa ventana."""
+    usable dejaba al pipeline cargar 'medium' justo en esa ventana. Uno que espera
+    disco tampoco: si el pipeline ya tiene 'medium' cargado, pausarlo toda la
+    reunion no encoge el pagefile y nadie transcribiria. Que el pipeline ceda con
+    poco disco mientras se graba es otra decision (pendiente, 26/10/2026)."""
     if proc is not None and proc.poll() is not None:
         return False
-    return read_status(wav).get('state') not in ('failed', 'exited', 'waiting_memory')
+    return read_status(wav).get('state') not in ('failed', 'exited', 'waiting_memory', 'waiting_disk')
 
 
 def kill(proc=None, wav: Path | None = None, timeout: float = 5.0) -> None:

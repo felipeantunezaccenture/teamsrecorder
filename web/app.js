@@ -265,6 +265,8 @@ const T = {
     bg_waiting_memory: 'Sin memoria libre para transcribir durante la reunión: se hará al colgar. Cerrar apps que no uses ayuda.',
     bg_yielded: 'Transcripción durante la reunión en pausa: se está terminando otra reunión.',
     live_waiting_memory: 'Sin memoria libre para transcribir ahora: el transcript se hará al colgar. Cerrar apps que no uses ayuda.',
+    bg_waiting_disk: 'Poco espacio en disco: la grabación sigue, y la transcripción se hará al colgar. Libera espacio.',
+    live_waiting_disk: 'Poco espacio en disco: la grabación sigue, y el transcript se hará al colgar. Libera espacio.',
     live_switch: 'Activar en vivo',
     live_switch_sent: 'Activando el transcript en vivo…',
     live_switch_failed: 'No se pudo activar el transcript en vivo',
@@ -680,6 +682,8 @@ const T = {
     bg_waiting_memory: 'Not enough free memory to transcribe during the meeting: it will be done after the call. Closing apps you are not using helps.',
     bg_yielded: 'Transcription during the meeting paused: another meeting is being finished.',
     live_waiting_memory: 'Not enough free memory to transcribe now: the transcript will be made after the call. Closing apps you are not using helps.',
+    bg_waiting_disk: 'Low disk space: the recording continues, and the transcription will be done after the call. Free up some space.',
+    live_waiting_disk: 'Low disk space: the recording continues, and the transcript will be made after the call. Free up some space.',
     live_switch: 'Go live',
     live_switch_sent: 'Turning on the live transcript…',
     live_switch_failed: 'Could not turn on the live transcript',
@@ -1094,6 +1098,8 @@ const T = {
     bg_waiting_memory: 'Sense memòria lliure per transcriure durant la reunió: es farà en penjar. Tancar apps que no facis servir ajuda.',
     bg_yielded: 'Transcripció durant la reunió en pausa: s\'està acabant una altra reunió.',
     live_waiting_memory: 'Sense memòria lliure per transcriure ara: el transcript es farà en penjar. Tancar apps que no facis servir ajuda.',
+    bg_waiting_disk: 'Poc espai al disc: la gravació continua, i la transcripció es farà en penjar. Allibera espai.',
+    live_waiting_disk: 'Poc espai al disc: la gravació continua, i el transcript es farà en penjar. Allibera espai.',
     live_switch: 'Activar en directe',
     live_switch_sent: 'Activant el transcript en directe…',
     live_switch_failed: 'No s\'ha pogut activar el transcript en directe',
@@ -5823,7 +5829,8 @@ async function updatePipelineFooter() {
     // Por que la transcripcion durante la reunion no avanza (23/10/2026: una
     // llamada entera esperando memoria sin que se viera en ningun sitio).
     const bgKey = j.stage === 'recording'
-      ? ({ waiting_memory: 'bg_waiting_memory', yielded: 'bg_yielded' })[j.live_state] : null;
+      ? ({ waiting_memory: 'bg_waiting_memory', waiting_disk: 'bg_waiting_disk',
+           yielded: 'bg_yielded' })[j.live_state] : null;
     const bgLine = bgKey
       ? `<div class="pipeline-job-subtitle" style="font-size:11px;color:var(--muted);margin:3px 0 0 16px">${escHtml(t(bgKey))}</div>`
       : '';
@@ -5892,6 +5899,7 @@ async function refreshLiveModal() {
   const statusEl = document.getElementById('live-modal-status');
   statusEl.textContent = data?.state === 'failed' ? t('live_failed')
                        : data?.state === 'waiting_memory' ? t('live_waiting_memory')
+                       : data?.state === 'waiting_disk' ? t('live_waiting_disk')
                        : data?.mode === 'background' ? t('live_bg_hint')
                        : (lines.length || _liveCount) ? '' : t('live_waiting');
   // Al parar, el pipeline cierra el transcript y borra los ficheros en vivo:

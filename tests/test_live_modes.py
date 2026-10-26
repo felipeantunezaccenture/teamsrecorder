@@ -580,6 +580,9 @@ def proceso(wav, monkeypatch):
     monkeypatch.setattr(lt, '_start_watchdog', lambda *_a: None)
     monkeypatch.setattr(lt, '_memory_ok', lambda _n: True)
     monkeypatch.setattr(lt, '_memory_floor_ok', lambda: True)
+    # Ni del disco de la maquina: con menos de ~6 GB libres esperaria disco.
+    monkeypatch.setattr(lt, '_disk_ok', lambda _n: True)
+    monkeypatch.setattr(lt, '_disk_floor_ok', lambda: True)
     prioridades, eficiencia = [], []
     monkeypatch.setattr(lt, '_set_priority', prioridades.append)
     monkeypatch.setattr(lt, '_opt_out_of_efficiency_mode', lambda: eficiencia.append(1) or True)

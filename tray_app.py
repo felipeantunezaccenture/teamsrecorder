@@ -71,7 +71,14 @@ _STR = {
         mic_menu_active='Micrófono: {name} — activo (clic para silenciar)',
         mic_tip_muted='micro SILENCIADO',
         mic_muted_warning='Tu micrófono ({name}) está silenciado en Windows: no se grabará tu voz. Actívalo desde el menú de Noted.',
-        disk_full='Disco lleno: la grabación se ha interrumpido. Libera espacio.',
+        disk_full='Disco lleno: Noted guarda el audio en memoria y lo escribirá en cuanto haya espacio. Libera espacio.',
+        disk_full_reserve='Disco lleno: Noted ha liberado su reserva de {released:.0f} GB y guarda el audio en memoria hasta que haya espacio. Libera espacio.',
+        disk_recovered='Hay espacio otra vez: el audio está guardado completo.',
+        write_failed='Noted no puede escribir el audio (¿un archivo bloqueado?). Lo guarda en memoria y lo reintenta.',
+        save_failed='No se pudo guardar la grabación. El audio se conserva en recordings (archivos .part): revisa el log.',
+        disk_low='Queda poco espacio en disco ({gb:.1f} GB). Noted sigue grabando.',
+        disk_critical='Disco casi lleno ({gb:.1f} GB). Libera espacio: mientras tanto Noted guarda el audio en memoria.',
+        disk_critical_reserve='Disco casi lleno ({gb:.1f} GB): Noted ha liberado su reserva de {released:.0f} GB para seguir grabando. Libera espacio.',
         cancel_job='Descartar esta reunion (papelera)',
         job_cancelled='Reunion descartada: el audio y lo generado se han movido a la papelera.',
         ctx_title='Contexto / objetivo de la reunion',
@@ -104,7 +111,14 @@ _STR = {
         mic_menu_active='Microphone: {name} — on (click to mute)',
         mic_tip_muted='mic MUTED',
         mic_muted_warning='Your microphone ({name}) is muted in Windows: your voice will not be recorded. Unmute it from the Noted menu.',
-        disk_full='Disk full: the recording has stopped. Free up some space.',
+        disk_full='Disk full: Noted keeps the audio in memory and will write it as soon as there is space. Free up some space.',
+        disk_full_reserve='Disk full: Noted released its {released:.0f} GB reserve and keeps the audio in memory until there is space. Free up some space.',
+        disk_recovered='Disk space is back: the audio is fully saved.',
+        write_failed='Noted cannot write the audio (a locked file?). It keeps it in memory and retries.',
+        save_failed='The recording could not be saved. The audio is kept in recordings (.part files): check the log.',
+        disk_low='Low disk space ({gb:.1f} GB left). Noted keeps recording.',
+        disk_critical='Disk almost full ({gb:.1f} GB). Free up some space: meanwhile Noted keeps the audio in memory.',
+        disk_critical_reserve='Disk almost full ({gb:.1f} GB): Noted released its {released:.0f} GB reserve to keep recording. Free up some space.',
         cancel_job='Discard this meeting (bin)',
         job_cancelled='Meeting discarded: the audio and generated files were moved to the bin.',
         ctx_title='Meeting context / goal',
@@ -115,6 +129,12 @@ _STR = {
 }
 
 log = logging.getLogger(__name__)
+
+# Cada cuanto se mira el disco mientras se graba (ver disk_guard).
+DISK_CHECK_EVERY_S = 20.0
+# Con el disco al limite, escribir puede fallar y recuperarse cada pocos segundos:
+# como mucho un aviso de cada tipo en este intervalo.
+DISK_TOAST_EVERY_S = 120.0
 
 
 def _make_icon(color: str):
@@ -291,6 +311,9 @@ class TrayApp:
             self.last_recording_mode = self._rec_mode
             self._recording_path = path
             self._recording_start = time.time()
+            import disk_guard
+            self._disk_levels = disk_guard.Levels()
+            self._disk_next_check = 0.0
             self._ticker_stop.clear()
             t = threading.Thread(target=self._ticker, daemon=True, name='TrayTicker')
             t.start()
@@ -634,6 +657,42 @@ class TrayApp:
                     pass
             self._write_status()
             self._check_pending_notification()
+            if self._recording_start and time.monotonic() >= self._disk_next_check:
+                self._disk_next_check = time.monotonic() + DISK_CHECK_EVERY_S
+                try:
+                    self._check_disk()
+                except Exception as e:
+                    log.warning(f"No se pudo comprobar el disco: {e}")
+
+    def _check_disk(self):
+        """Disco libre mientras se graba (ver disk_guard). El 26/10/2026 se lleno
+        en minutos a mitad de una reunion y nadie aviso."""
+        import disk_guard
+        free = disk_guard.free_gb()
+        level = self._disk_levels.update(free)
+        if level is None:
+            return
+        s = _STR.get(get_ui_language(), _STR['en'])
+        if level == 'warn':
+            log.warning(f"Poco disco durante la grabacion: {free:.1f} GB libres")
+            self._notify('Noted ⚠', s['disk_low'].format(gb=free))
+            return
+        released = disk_guard.release_reserve()
+        log.error(f"Disco casi lleno durante la grabacion: {free:.1f} GB libres; "
+                  f"reserva liberada {released:.1f} GB")
+        msg = (s['disk_critical_reserve'].format(gb=free, released=released) if released
+               else s['disk_critical'].format(gb=free))
+        self._notify('Noted ⚠', msg)
+
+    def _refresh_disk_reserve(self):
+        """Repone la reserva de disco fuera de las grabaciones (ver disk_guard)."""
+        try:
+            if getattr(self._recorder, 'is_recording', False):
+                return
+            import disk_guard
+            disk_guard.ensure_reserve()
+        except Exception as e:
+            log.warning(f"No se pudo reponer la reserva de disco: {e}")
 
     def _start_daily_brain_scan(self):
         """Background thread: runs email brain scan daily at ~08:00."""
@@ -1116,6 +1175,7 @@ class TrayApp:
             log.error(f"Error cerrando la reunión {session.get('base_wav')}: {e}", exc_info=True)
             self._current_job = {}
             self.set_processing('')
+        self._refresh_disk_reserve()
 
     def _finalize_session_body(self, session):
         from storage import get_transcript_path, get_minutes_path
@@ -1428,6 +1488,12 @@ class TrayApp:
 
     def _recover_pending(self):
         time.sleep(3)
+        # Primero los .part que un cierre del daemon dejo sin convertir en WAV:
+        # asi entran en la cola como cualquier otra grabacion pendiente.
+        try:
+            self._recorder.recover_orphan_parts(RECORDINGS_DIR)
+        except Exception as e:
+            log.error(f"No se pudieron recuperar las grabaciones a medio guardar: {e}")
         pending = []
         for wav in RECORDINGS_DIR.glob('*.wav'):
             # Las pistas .mic.wav / .loop.wav acompañan a una grabacion: no son
@@ -1451,6 +1517,7 @@ class TrayApp:
             log.info(f"{len(pending)} grabacion(es) pendiente(s) de procesar: se reanudan")
             for wav in pending:
                 self._pipeline_queue.put(wav)
+        self._refresh_disk_reserve()
 
     def _toggle_recording(self):
         if self._recorder.is_recording:
@@ -1598,9 +1665,51 @@ class TrayApp:
         self._notify('Noted ⚠', s['mic_unavailable'])
 
     def warn_disk_full(self, reason: str = ''):
-        log.error(f"Disco lleno durante grabación: {reason}")
+        """Un writer o el guardado no pueden escribir. Es justo para lo que esta
+        la reserva: tambien fuera de una grabacion (un guardado esperando sitio),
+        donde el ticker no mira el disco."""
+        log.error(f"No se puede escribir el audio: {reason}")
+        released, low = 0.0, True
+        try:
+            import disk_guard
+            free = disk_guard.free_gb()
+            # Un antivirus que bloquea el fichero no es disco lleno: ni se gasta
+            # la reserva ni se dice "disco lleno".
+            low = free is None or free < disk_guard.WARN_GB
+            if low:
+                released = disk_guard.release_reserve()
+        except Exception as e:
+            log.warning(f"No se pudo liberar la reserva de disco: {e}")
+        if self._toast_due('disk_full'):
+            s = _STR.get(get_ui_language(), _STR['en'])
+            msg = (s['disk_full_reserve'].format(released=released) if released
+                   else s['disk_full'] if low else s['write_failed'])
+            self._notify('Noted ⚠', msg)
+
+    def warn_disk_recovered(self):
+        log.warning("Se puede escribir otra vez: el audio está guardado completo")
+        if self._toast_due('disk_recovered'):
+            s = _STR.get(get_ui_language(), _STR['en'])
+            self._notify('Noted', s['disk_recovered'])
+            # Si vuelve a llenarse, que se diga otra vez aunque no hayan pasado
+            # DISK_TOAST_EVERY_S: el ultimo aviso visible no puede ser "todo bien".
+            self._toast_last.pop('disk_full', None)
+
+    def warn_save_failed(self, reason: str = ''):
+        log.error(f"Grabación sin guardar (los .part se conservan): {reason}")
         s = _STR.get(get_ui_language(), _STR['en'])
-        self._notify('Noted ⚠', s['disk_full'])
+        self._notify('Noted ⚠', s['save_failed'])
+
+    def _toast_due(self, key: str) -> bool:
+        """True si este aviso no salio en los ultimos DISK_TOAST_EVERY_S."""
+        last = getattr(self, '_toast_last', None)
+        if last is None:
+            last = self._toast_last = {}
+        now = time.monotonic()
+        if now - last.get(key, -DISK_TOAST_EVERY_S) < DISK_TOAST_EVERY_S:
+            return False
+        last[key] = now
+        return True
 
     def _notify(self, title: str, msg: str):
         try:

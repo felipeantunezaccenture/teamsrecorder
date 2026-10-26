@@ -1,3 +1,4 @@
+import collections
 import logging
 import os
 import queue
@@ -62,6 +63,34 @@ _LOOPBACK_LATE_WAIT = 10.0
 # La voz humana no tiene contenido útil por debajo de 80 Hz.
 _HIGHPASS_HZ = 80.0
 
+# Disco lleno. 26/10/2026: el escritor moria al primer fallo y el resto de una
+# reunion (11 min) se quedo en la cola y se tiro al colgar. Ahora el audio espera
+# en memoria y el escritor reintenta cada _WRITE_RETRY_S; el guardado final, cada
+# _SAVE_RETRY_S, y los .part no se borran hasta tener el WAV.
+_WRITE_RETRY_S = 5.0
+_SAVE_RETRY_S = 30.0
+
+# libsndfile solo reescribe el header de un fichero abierto en 'r+' al cerrarlo.
+# Medido el 26/10/2026: reabierto un .part, escritos 8000 frames mas y muerto el
+# proceso sin cerrar, sf.info seguia diciendo los de la reapertura, y la
+# recuperacion habria cortado la reunion ahi. Un fichero nuevo no lo necesita:
+# mientras esta abierto el chunk de datos vale 0 y los lectores usan el tamaño.
+# soundfile no le da nombre: 0x1060 es SFC_UPDATE_HEADER_NOW en sndfile.h.
+_SFC_UPDATE_HEADER_NOW = 0x1060
+
+
+def _update_header_now(f) -> None:
+    sf._snd.sf_command(f._file, _SFC_UPDATE_HEADER_NOW, sf._ffi.NULL, 0)
+
+
+def _is_retryable(e: Exception) -> bool:
+    """Lo que puede arreglarse esperando: disco lleno, un fichero bloqueado, falta
+    de memoria. Un fallo de formato o del codigo no; reintentarlo cada 30 s
+    dejaria la puerta de reinicio cerrada para siempre."""
+    if isinstance(e, (OSError, MemoryError)):
+        return True
+    return isinstance(e, sf.LibsndfileError) and e.code == 2      # SF_ERR_SYSTEM
+
 
 class AudioRecorder:
     """Graba micrófono + audio del sistema escribiendo a disco de forma
@@ -92,6 +121,15 @@ class AudioRecorder:
         # tray_app.py) y sin esto pueden entrar los dos a la vez.
         self._start_lock = threading.Lock()
 
+        # Una por grabacion: cancel() la activa para que un escritor que reintenta
+        # con el disco lleno suelte el audio descartado en vez de seguir.
+        self._writer_abort = threading.Event()
+        # Stems cuyo WAV se esta guardando. _save_event esta "set" cuando no hay
+        # ninguno: lo espera _quit para no cortar un guardado.
+        self._saving_stems: set[str] = set()
+        self._saves_lock = threading.Lock()
+        self._failing: set[str] = set()      # ver _set_failing
+        self._failing_lock = threading.Lock()
         self._mic_q: queue.Queue | None = None
         self._loop_q: queue.Queue | None = None
         self._mic_writer: threading.Thread | None = None
@@ -116,6 +154,8 @@ class AudioRecorder:
         self.on_recording_stopped = None     # callable(wav_path)
         self.on_loopback_unavailable = None  # callable(reason) — grabando solo micrófono
         self.on_write_error = None           # callable(reason) — error al escribir a disco
+        self.on_write_recovered = None       # callable() — se pudo escribir otra vez
+        self.on_save_failed = None           # callable(reason) — WAV sin guardar, .part conservados
 
     @property
     def is_recording(self) -> bool:
@@ -128,25 +168,30 @@ class AudioRecorder:
         # su worker WASAPI; el segundo start() sobreescribía self._stream y
         # dejaba el primero huérfano pero activo, y al recolectarlo el proceso
         # moría con ACCESS_VIOLATION dentro del callback de audio.
+        # _begin entero bajo el lock: un stop() que llegara mientras se abre el
+        # InputStream (~1 s) soltaba los writers y dejaba un stream sin cerrar.
         with self._start_lock:
             if self._recording:
                 return
             self._recording = True
-        try:
-            self._begin(output_path)
-        except Exception:
-            self._recording = False
-            self._close_inputs()
-            self._close_writers()
-            self._save_event.set()
-            raise
+            try:
+                self._begin(output_path)
+            except Exception:
+                self._recording = False
+                self._close_inputs()
+                self._writer_abort.set()
+                self._close_writers()
+                raise
 
     def _begin(self, output_path: Path):
-        # Si hay un guardado en curso del ciclo anterior, esperar a que termine
-        # antes de reutilizar los temporales, para no perder datos.
-        if not self._save_event.is_set():
+        # El guardado de la reunion anterior ya no se espera: tiene sus propias
+        # rutas y, con el disco lleno, puede tardar lo que tarde en haber sitio.
+        # Esperarlo retrasaba el micro de la siguiente hasta 30 s. Solo si fuera
+        # el mismo stem (get_recording_path ya lo evita) se pisarian los .part.
+        if output_path.stem in self._saving_stems:
+            log.warning(f"Aun se guarda {output_path.name}; espero antes de grabar encima")
             self._save_event.wait(timeout=30)
-        self._save_event.clear()
+        self._writer_abort = threading.Event()
         self._output_path = output_path
         self._chunk_mic_pos = 0
         self._reset_resampler()
@@ -158,12 +203,19 @@ class AudioRecorder:
         self._tmp_mic = Path(stem + '.mic.part')
         self._tmp_loop = Path(stem + '.loop.part')
         self._discard_temp()
+        # El writer abre el .part con el primer bloque. Si esa apertura falla
+        # (disco lleno), sin este fichero ningun {stem}.* diria que el nombre esta
+        # ocupado y otra grabacion del mismo minuto podria recibirlo.
+        try:
+            self._tmp_mic.touch()
+        except OSError:
+            pass
 
         self._mic_q = queue.Queue()
         self._mic_writer = threading.Thread(
             target=self._writer_loop,
             args=(self._mic_q, self._tmp_mic, 1, SAMPLE_RATE, 'mic'),
-            kwargs={'highpass': True},
+            kwargs={'highpass': True, 'abort': self._writer_abort},
             daemon=True, name='MicWriter',
         )
         self._mic_writer.start()
@@ -191,29 +243,75 @@ class AudioRecorder:
         log.info(f"Recording started → {output_path}")
 
     def stop(self) -> Path | None:
-        if not self._recording:
-            return None
-        self._recording = False
-        self._close_inputs()
-        self._close_writers()
+        # Bajo _start_lock: un start() de la reunion siguiente no puede colarse
+        # entre bajar el flag y soltar los writers, o se quedaria con los de esta.
+        with self._start_lock:
+            if not self._recording:
+                return None
+            self._recording = False
+            self._close_inputs()
+            # Sin esperar a los writers: con el disco lleno tardan lo que tarde
+            # en haber sitio, y stop() lo llama la bandeja. Los espera el guardado.
+            writers = self._detach_writers()
+            mic_path, loop_path, out_path = self._tmp_mic, self._tmp_loop, self._output_path
+            with self._saves_lock:
+                self._saving_stems.add(out_path.stem)
+                self._save_event.clear()
 
         t = threading.Thread(
-            target=self._process_and_save, daemon=True, name='AudioProcessor',
+            target=self._process_and_save, args=(mic_path, loop_path, out_path, writers),
+            daemon=True, name='AudioProcessor',
         )
         t.start()
-        return self._output_path
+        return out_path
 
     def cancel(self) -> None:
         """Para la grabación y descarta el audio sin guardar ni procesar."""
-        if not self._recording:
-            return
-        self._recording = False
-        self._close_inputs()
-        self._close_writers()
-        self._discard_temp()
-        _remove_sentinel()
-        self._save_event.set()
+        with self._start_lock:
+            if not self._recording:
+                return
+            self._recording = False
+            self._close_inputs()
+            self._writer_abort.set()
+            writers = self._detach_writers()
+            temps = (self._tmp_mic, self._tmp_loop)
+        # Los joins fuera del lock: un writer atascado en libsndfile no debe
+        # retrasar el start() de la reunion siguiente. Al abortar, cada writer
+        # borra su .part; esto recoge lo que quede.
+        for th in writers:
+            th.join(timeout=30)
+        self._discard_temp(*temps)
+        self._remove_sentinel_if_idle()
         log.info("Recording cancelled — audio discarded")
+
+    def _remove_sentinel_if_idle(self) -> None:
+        """.recording_active es la puerta de reinicio del daemon (tr_env.ps1): no
+        se quita mientras quede una grabacion o un guardado con audio en memoria."""
+        with self._saves_lock:
+            if not self._recording and not self._saving_stems:
+                _remove_sentinel()
+
+    def _set_failing(self, key: str, reason: str | None) -> None:
+        """Lleva la cuenta de lo que no puede escribir (cada writer, cada guardado).
+        Avisa al empezar el primer fallo y cuando ya no falla ninguno: con dos
+        writers, que se recupere el micro no significa que el sistema escriba."""
+        with self._failing_lock:
+            was = bool(self._failing)
+            if reason is None:
+                self._failing.discard(key)
+            else:
+                self._failing.add(key)
+            now = bool(self._failing)
+        if now and not was:
+            self._fire(self.on_write_error, reason, 'WriteErrorWarning')
+        elif was and not now:
+            self._fire(self.on_write_recovered, None, 'WriteRecovered')
+
+    def _clear_failing(self, key: str) -> None:
+        """Quita un fallo sin avisar de recuperacion: una reunion descartada o un
+        guardado abandonado no han vuelto a escribir."""
+        with self._failing_lock:
+            self._failing.discard(key)
 
     def wait_for_save(self, timeout: int = 60) -> bool:
         return self._save_event.wait(timeout=timeout)
@@ -228,34 +326,126 @@ class AudioRecorder:
             q.put(indata.copy().reshape(-1))
 
     def _writer_loop(self, q: queue.Queue, path: Path, channels: int, samplerate: int,
-                     label: str, highpass: bool = False):
+                     label: str, highpass: bool = False, abort: threading.Event | None = None):
+        """Vuelca la cola al .part. Un fallo al escribir no lo para: los bloques
+        esperan en memoria, en orden, y cada _WRITE_RETRY_S se reabre el fichero
+        y se escriben. Con el disco lleno libsndfile lanza LibsndfileError, que no
+        es un OSError: por eso vale cualquier excepcion (26/10/2026, ver arriba).
+
+        Si se aborta (cancel) suelta lo pendiente y borra su .part: con el
+        fichero abierto, cancel() no podria borrarlo y la reunion descartada
+        volveria al arrancar como grabacion a medio guardar."""
+        key = f'{label}:{path.name}'
+        pending = collections.deque()
+        dc = [0.0, 0.0]         # paso-alto propio: con stop() sin esperar, dos writers pueden convivir
+        f = None
+        reopened = False        # en 'r+' el header no se reescribe solo
+        written = 0             # frames que este writer sabe en disco
+        failing_since = None
+        next_try = 0.0
+        done = False
         try:
-            with sf.SoundFile(
-                str(path), mode='w', samplerate=samplerate,
-                channels=channels, format='WAV', subtype='FLOAT',
-            ) as f:
-                while True:
-                    block = q.get()
+            while not done or pending:
+                if abort is not None and abort.is_set():
+                    return
+                if not done:
+                    try:
+                        block = q.get(timeout=_WRITE_RETRY_S if pending else None)
+                    except queue.Empty:
+                        block = ()
                     if block is None:
-                        break
-                    if not len(block):
-                        continue
-                    if highpass:
-                        block = self._dc_block(block)
-                    f.write(block)
-                    # Flush en cada bloque: mantiene el header al día (lo
-                    # necesita on_chunk) y deja el audio en disco si el proceso
-                    # muere a mitad de la reunión.
-                    f.flush()
-        except OSError as e:
-            log.error(f"Writer {label} error de disco: {e}", exc_info=True)
-            if self.on_write_error:
-                threading.Thread(
-                    target=self.on_write_error, args=(str(e),),
-                    daemon=True, name='WriteErrorWarning',
-                ).start()
-        except Exception as e:
-            log.error(f"Writer {label} falló: {e}", exc_info=True)
+                        done = True
+                    elif len(block):
+                        pending.append(self._dc_block(block, dc) if highpass else block)
+                elif failing_since is not None:
+                    # Ya no llega nada: esperar al siguiente intento sin girar.
+                    wait = next_try - time.monotonic()
+                    if wait > 0:
+                        (abort.wait(wait) if abort is not None else time.sleep(wait))
+                if not pending or time.monotonic() < next_try:
+                    continue
+                try:
+                    if f is None:
+                        if written and not (path.exists() and path.stat().st_size > 0):
+                            # Entre reintentos el .part queda cerrado y alguien lo
+                            # borro (liberando espacio, como pide el aviso). Lo ya
+                            # escrito se perdio; lo pendiente no tiene por que.
+                            log.error(f"Writer {label}: {path.name} desaparecio con {written} "
+                                      f"frames escritos; sigo con lo pendiente en uno nuevo")
+                            written = 0
+                        f = self._open_part(path, channels, samplerate, written or None)
+                        reopened = bool(written)
+                    while pending:
+                        if abort is not None and abort.is_set():
+                            return
+                        f.write(pending[0])
+                        # Flush en cada bloque: deja el audio en disco si el
+                        # proceso muere a mitad de la reunión.
+                        f.flush()
+                        if reopened:
+                            _update_header_now(f)
+                        written += len(pending.popleft())
+                except Exception as e:
+                    f = self._close_quietly(f)
+                    next_try = time.monotonic() + _WRITE_RETRY_S
+                    if failing_since is None:
+                        failing_since = time.monotonic()
+                        log.error(f"Writer {label}: no se pudo escribir ({e}); el audio sigue "
+                                  f"en memoria y se reintenta cada {_WRITE_RETRY_S:.0f} s",
+                                  exc_info=True)
+                        self._set_failing(key, str(e))
+                else:
+                    if failing_since is not None:
+                        log.warning(f"Writer {label}: escribe otra vez tras "
+                                    f"{time.monotonic() - failing_since:.0f} s, sin perder audio")
+                        failing_since = None
+                        self._set_failing(key, None)
+        finally:
+            self._close_quietly(f)
+            if abort is not None and abort.is_set():
+                self._clear_failing(key)
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _open_part(path: Path, channels: int, samplerate: int, frames: int | None = None):
+        """Sin `frames`, fichero nuevo. Con `frames` (los que el writer ya sabe en
+        disco), 'r+' y truncate a esa cifra: quita lo que una escritura a medias
+        dejo detras, para no repetir ni perder bloques (probado con libsndfile
+        real, ver tests/test_disk_full.py)."""
+        if frames:
+            f = sf.SoundFile(str(path), mode='r+')
+            try:
+                if f.frames < frames:
+                    log.warning(f"{path.name}: el header dice {f.frames} frames y hay {frames}")
+                f.truncate(min(frames, f.frames))
+                _update_header_now(f)
+            except Exception:
+                f.close()
+                raise
+            return f
+        return sf.SoundFile(
+            str(path), mode='w', samplerate=samplerate,
+            channels=channels, format='WAV', subtype='FLOAT',
+        )
+
+    @staticmethod
+    def _close_quietly(f):
+        if f is not None:
+            try:
+                f.close()
+            except Exception:
+                pass
+        return None
+
+    @staticmethod
+    def _fire(callback, arg, name: str) -> None:
+        """Avisos en un hilo aparte: un toast lento no debe frenar al escritor."""
+        if callback:
+            threading.Thread(target=callback, args=() if arg is None else (arg,),
+                             daemon=True, name=name).start()
 
     def _start_loopback_async(self):
         """Abre el loopback con reintentos, fuera del hilo de start().
@@ -391,7 +581,7 @@ class AudioRecorder:
         self._loop_q = queue.Queue()
         self._loop_writer = threading.Thread(
             target=self._writer_loop, args=(self._loop_q, self._tmp_loop, 1, SAMPLE_RATE, 'loop'),
-            daemon=True, name='LoopWriter',
+            kwargs={'abort': self._writer_abort}, daemon=True, name='LoopWriter',
         )
         self._loop_writer.start()
 
@@ -425,7 +615,7 @@ class AudioRecorder:
         self._dc_x1 = 0.0
         self._dc_y1 = 0.0
 
-    def _dc_block(self, block: np.ndarray) -> np.ndarray:
+    def _dc_block(self, block: np.ndarray, state: list | None = None) -> np.ndarray:
         """Paso-alto de primer orden (DC blocker) sobre un bloque del micrófono.
 
             y[n] = x[n] - x[n-1] + R * y[n-1]     R = 1 - 2*pi*fc/sr
@@ -438,14 +628,18 @@ class AudioRecorder:
         """
         r = 1.0 - (2.0 * np.pi * _HIGHPASS_HZ / SAMPLE_RATE)
         out = np.empty(len(block), dtype=np.float32)
-        x1, y1 = self._dc_x1, self._dc_y1
+        # `state` ([x1, y1]) es el de un writer; sin el, el de la instancia.
+        x1, y1 = state if state is not None else (self._dc_x1, self._dc_y1)
         # Bucle explícito: el filtro es recursivo y no se vectoriza. Son 1600
         # muestras por bloque (100 ms), coste despreciable y fuera del callback.
         for i, x in enumerate(block):
             y1 = x - x1 + r * y1
             x1 = x
             out[i] = y1
-        self._dc_x1, self._dc_y1 = float(x1), float(y1)
+        if state is not None:
+            state[0], state[1] = float(x1), float(y1)
+        else:
+            self._dc_x1, self._dc_y1 = float(x1), float(y1)
         return out
 
     def _to_mic_format(self, arr: np.ndarray, sr: int, n_ch: int) -> np.ndarray:
@@ -562,16 +756,21 @@ class AudioRecorder:
     def _close_writers(self):
         """Se llama con los productores ya parados: encola el centinela y espera
         a que cada writer vacíe su cola, para no perder los últimos bloques."""
+        for th in self._detach_writers():
+            th.join(timeout=30)
+
+    def _detach_writers(self) -> list[threading.Thread]:
+        """Encola el centinela de cada writer y los suelta de la grabacion. Los
+        devuelve para que los espere quien vaya a leer sus .part."""
         for q in (self._mic_q, self._loop_q):
             if q is not None:
                 q.put(None)
-        for th in (self._mic_writer, self._loop_writer):
-            if th is not None:
-                th.join(timeout=30)
+        writers = [th for th in (self._mic_writer, self._loop_writer) if th is not None]
         self._mic_q = None
         self._loop_q = None
         self._mic_writer = None
         self._loop_writer = None
+        return writers
 
     def _close_stale_loop_writer(self):
         """Cierra el writer del loopback de un intento anterior, si quedó uno.
@@ -609,8 +808,9 @@ class AudioRecorder:
         except OSError as e:
             log.warning(f"No se pudo borrar el temporal del loopback: {e}")
 
-    def _discard_temp(self):
-        for p in (self._tmp_mic, self._tmp_loop):
+    def _discard_temp(self, *paths: Path | None):
+        """Borra los .part de la grabacion actual, o los que se le pasen."""
+        for p in (paths or (self._tmp_mic, self._tmp_loop)):
             if p:
                 try:
                     p.unlink(missing_ok=True)
@@ -619,78 +819,163 @@ class AudioRecorder:
 
     # ── mezcla y guardado ────────────────────────────────────────────────────
 
-    def _process_and_save(self):
+    def _process_and_save(self, mic_path: Path, loop_path: Path | None, out_path: Path,
+                          writers=()):
+        """Espera a que los writers vuelquen todo y guarda el WAV.
+
+        Recibe sus rutas: con dos reuniones seguidas, self._tmp_* ya son las de la
+        siguiente, y borrarlas al acabar perdia la reunion que se estaba grabando.
+        Los .part solo se borran con el WAV guardado: si no se puede escribir
+        (disco lleno), se reintenta cada _SAVE_RETRY_S. Antes el finally los
+        borraba igual y se perdia la reunion entera.
+        """
+        key = f'save:{out_path.name}'
         try:
-            mic_path, loop_path, out_path = self._tmp_mic, self._tmp_loop, self._output_path
-
-            mic_frames = self._frames(mic_path)
-            if not mic_frames:
-                log.warning("No mic data recorded")
-                return
-
-            mic_peak = self._peak(mic_path)
-            mic_gain = (0.8 / mic_peak) if mic_peak > 0 else 1.0
-
-            loop_frames = self._frames(loop_path)
-            use_loop = False
-            if loop_frames:
-                loop_peak = self._peak(loop_path)
-                if loop_peak < 0.02 or loop_frames < mic_frames * 0.1:
-                    log.info("Loopback descartado (peak bajo o duración insuficiente)")
-                else:
-                    use_loop = True
-
-            if use_loop:
-                # La mezcla dura lo que el stream MÁS largo, rellenando el otro
-                # con silencio. Truncar al más corto (min) perdía el final de la
-                # reunión: WASAPI no entrega loopback mientras nadie habla, así
-                # que el fichero del sistema se queda corto y con `min` se
-                # tiraban los minutos de micrófono que venían después.
-                total = max(mic_frames, loop_frames)
-                mix_peak = self._mix_peak(mic_path, loop_path, total, mic_gain)
-                gain = (0.9 / mix_peak) if mix_peak > 1.0 else 1.0
-                self._write_mix(out_path, mic_path, loop_path, total, mic_gain, gain)
-            else:
-                gain = 1.0
-                self._write_mix(out_path, mic_path, None, mic_frames, mic_gain, gain)
-
-            log.info(f"WAV guardado: {out_path}")
-
-            # Save normalized speaker tracks so the transcriber can label who said what.
-            # Must happen before on_recording_stopped (which triggers transcription in a thread)
-            # and before _discard_temp() in the finally block.
-            try:
-                self._write_mono(
-                    out_path.with_suffix('.mic.wav'), mic_path, mic_frames, mic_gain * gain,
-                )
-                if use_loop:
-                    loop_norm = (0.8 / loop_peak) if loop_peak > 0 else 1.0
-                    self._write_mono(
-                        out_path.with_suffix('.loop.wav'), loop_path, loop_frames, loop_norm * gain,
-                    )
-                log.info("Speaker tracks guardados para diarización")
-            except Exception as e:
-                log.warning(f"Speaker tracks no guardados: {e}")
-
-            if self.on_recording_stopped:
+            for th in writers:
+                th.join()
+            warned = False
+            while True:
+                try:
+                    saved, keep_loop = self._save_wav(mic_path, loop_path, out_path)
+                    break
+                except Exception as e:
+                    self._remove_outputs(out_path)
+                    if not _is_retryable(e):
+                        log.error(f"No se pudo guardar {out_path.name}: {e}. Los temporales se "
+                                  f"conservan y se reintentara al arrancar Noted", exc_info=True)
+                        self._clear_failing(key)
+                        self._fire(self.on_save_failed, str(e), 'SaveFailed')
+                        return
+                    if not warned:
+                        warned = True
+                        log.error(f"Error guardando WAV: {e}; los temporales se conservan y "
+                                  f"se reintenta cada {_SAVE_RETRY_S:.0f} s", exc_info=True)
+                        self._set_failing(key, str(e))
+                    time.sleep(_SAVE_RETRY_S)
+            if warned:
+                log.warning(f"WAV guardado al reintentar: {out_path.name}")
+                self._set_failing(key, None)
+            self._discard_temp(mic_path, None if keep_loop else loop_path)
+            if saved and self.on_recording_stopped:
                 threading.Thread(
                     target=self.on_recording_stopped, args=(out_path,), daemon=True,
                 ).start()
         except Exception as e:
             log.error(f"Error guardando WAV: {e}", exc_info=True)
         finally:
-            self._discard_temp()
-            _remove_sentinel()
-            self._save_event.set()
+            with self._saves_lock:
+                self._saving_stems.discard(out_path.stem)
+                if not self._saving_stems:
+                    self._save_event.set()
+            self._remove_sentinel_if_idle()
+
+    @staticmethod
+    def _remove_outputs(out_path: Path) -> None:
+        """Lo que dejo un guardado fallido: un WAV a medias se procesaria cortado."""
+        for p in (out_path, out_path.with_suffix('.mic.wav'), out_path.with_suffix('.loop.wav')):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def recover_orphan_parts(self, directory: Path) -> list[Path]:
+        """Convierte en WAV los .part que dejo un daemon cerrado antes de
+        guardarlos (por ejemplo, reiniciado mientras esperaba sitio en el disco).
+        Hasta el 26/10/2026 nadie los convertia y se borraban a los 15 dias.
+
+        Unos .part sin su WAV en processed/ son un guardado sin terminar: los
+        .part solo se borran despues del WAV, asi que se rehace aunque haya uno."""
+        recovered = []
+        busy = set(self._saving_stems)
+        if self._recording and self._output_path is not None:
+            busy.add(self._output_path.stem)
+        for mic in sorted(directory.glob('*.mic.part')):
+            stem = mic.name[:-len('.mic.part')]
+            loop = directory / f'{stem}.loop.part'
+            out = directory / f'{stem}.wav'
+            if stem in busy:
+                continue
+            if (directory / 'processed' / out.name).exists():
+                continue
+            try:
+                saved, keep_loop = self._save_wav(mic, loop if loop.exists() else None, out)
+                if saved:
+                    self._discard_temp(mic, None if keep_loop else loop)
+                    log.warning(f"Grabacion recuperada de sus temporales: {out.name}")
+                    recovered.append(out)
+            except Exception as e:
+                self._remove_outputs(out)
+                log.error(f"No se pudo recuperar {mic.name}: {e}", exc_info=True)
+        return recovered
+
+    def _save_wav(self, mic_path: Path, loop_path: Path | None,
+                  out_path: Path) -> tuple[bool, bool]:
+        """Mezcla los .part en el WAV final y guarda las pistas de cada voz.
+
+        Devuelve (guardado, conservar el .part del sistema). (False, False) si no
+        hay audio del micro; lanza si no se pudo escribir o leer el del micro. Un
+        .part del sistema ilegible no impide guardar el micro, pero se conserva."""
+        mic_frames = self._frames(mic_path)
+        if not mic_frames:
+            log.warning("No mic data recorded")
+            return False, False
+
+        mic_peak = self._peak(mic_path)
+        mic_gain = (0.8 / mic_peak) if mic_peak > 0 else 1.0
+
+        keep_loop = False
+        try:
+            loop_frames = self._frames(loop_path)
+        except Exception as e:
+            log.error(f"El audio del sistema ({loop_path.name}) no se puede leer: {e}; "
+                      f"se guarda solo el micro y el .part se conserva")
+            loop_frames, keep_loop = 0, True
+        use_loop = False
+        if loop_frames:
+            loop_peak = self._peak(loop_path)
+            if loop_peak < 0.02 or loop_frames < mic_frames * 0.1:
+                log.info("Loopback descartado (peak bajo o duración insuficiente)")
+            else:
+                use_loop = True
+
+        if use_loop:
+            # La mezcla dura lo que el stream MÁS largo, rellenando el otro
+            # con silencio. Truncar al más corto (min) perdía el final de la
+            # reunión: WASAPI no entrega loopback mientras nadie habla, así
+            # que el fichero del sistema se queda corto y con `min` se
+            # tiraban los minutos de micrófono que venían después.
+            total = max(mic_frames, loop_frames)
+            mix_peak = self._mix_peak(mic_path, loop_path, total, mic_gain)
+            gain = (0.9 / mix_peak) if mix_peak > 1.0 else 1.0
+            self._write_mix(out_path, mic_path, loop_path, total, mic_gain, gain)
+        else:
+            gain = 1.0
+            self._write_mix(out_path, mic_path, None, mic_frames, mic_gain, gain)
+
+        log.info(f"WAV guardado: {out_path}")
+
+        # Las pistas de cada voz, para que el transcriber sepa quien dijo que.
+        # Antes de on_recording_stopped (lanza la transcripcion) y de borrar los
+        # .part. Si no caben, el guardado entero se reintenta: el 26/10/2026 la
+        # reunion de las 15:33 se quedo sin ellas con el disco lleno.
+        self._write_mono(
+            out_path.with_suffix('.mic.wav'), mic_path, mic_frames, mic_gain * gain,
+        )
+        if use_loop:
+            loop_norm = (0.8 / loop_peak) if loop_peak > 0 else 1.0
+            self._write_mono(
+                out_path.with_suffix('.loop.wav'), loop_path, loop_frames, loop_norm * gain,
+            )
+        log.info("Speaker tracks guardados para diarización")
+        return True, keep_loop
 
     @staticmethod
     def _frames(path: Path | None) -> int:
-        try:
-            if path and path.exists():
-                return sf.info(str(path)).frames
-        except Exception:
-            pass
-        return 0
+        """0 si no existe o esta vacio. Si existe y no se puede leer, lanza:
+        darlo por vacio borraba un .part que nunca se habia guardado."""
+        if not path or not path.exists() or path.stat().st_size == 0:
+            return 0
+        return sf.info(str(path)).frames
 
     @staticmethod
     def _blocks(path: Path, limit: int | None = None):
