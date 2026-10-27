@@ -161,6 +161,11 @@ class AudioRecorder:
     def is_recording(self) -> bool:
         return self._recording
 
+    @property
+    def is_saving(self) -> bool:
+        """Algun WAV se esta guardando (o esperando sitio en el disco)."""
+        return not self._save_event.is_set()
+
     def start(self, output_path: Path):
         # Reservar el flag ANTES de cualquier espera. Con la comprobación y la
         # asignación separadas por el wait() de abajo, dos llamadas casi

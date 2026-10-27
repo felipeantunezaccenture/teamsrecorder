@@ -1193,6 +1193,32 @@ def _block_end(f, pos: int, end: int, vad, vad_opts) -> int:
 
 def finish_live(wav: Path, on_progress=None, should_cancel=None,
                 should_pause=None, hotwords: str | None = None) -> tuple[str, str] | None:
+    """Ver _finish_live. Un cierre aplazado (TranscriptionDeferred: se graba otra
+    reunion con poco disco o memoria) no cuenta como intento: con
+    FINISH_MAX_ATTEMPTS se rendiria y el pipeline lo transcribiria todo de nuevo.
+    Lo hecho hasta la pausa ya esta en el .live.jsonl."""
+    import transcriber
+    marker = finishing_path(wav)
+    try:
+        before = marker.read_text() if marker.exists() else None
+    except OSError:
+        before = None
+    try:
+        return _finish_live(wav, on_progress=on_progress, should_cancel=should_cancel,
+                            should_pause=should_pause, hotwords=hotwords)
+    except transcriber.TranscriptionDeferred:
+        try:
+            if before is None:
+                marker.unlink(missing_ok=True)
+            else:
+                marker.write_text(before)
+        except OSError:
+            pass
+        raise
+
+
+def _finish_live(wav: Path, on_progress=None, should_cancel=None,
+                 should_pause=None, hotwords: str | None = None) -> tuple[str, str] | None:
     """Cierra el transcript de una grabacion ya parada con lo hecho durante ella.
 
     Aprovecha los trozos hechos con un modelo aceptado (el de siempre; tambien
@@ -1279,7 +1305,7 @@ def finish_live(wav: Path, on_progress=None, should_cancel=None,
                 transcriber._wait_if_paused(should_pause, should_cancel)
                 model, model_name = transcriber._get_model(name), name
                 break
-            except transcriber.TranscriptionCancelled:
+            except (transcriber.TranscriptionCancelled, transcriber.TranscriptionDeferred):
                 raise
             except Exception as e:
                 if not transcriber._is_memory_error(e):

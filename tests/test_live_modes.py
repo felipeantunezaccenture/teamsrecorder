@@ -338,7 +338,8 @@ def test_el_pipeline_pasa_la_pausa_al_transcriptor(tray, wav, wav_factory, monke
     monkeypatch.setattr(tray, 'set_processing', lambda *_a: None)
     monkeypatch.setattr(tray, '_register_part', lambda *_a: None)
     tray._run_pipeline_sync(wav)
-    assert vistos['should_pause'] == tray._live_priority
+    # La del modo en vivo va dentro (ver test_pipeline_yields: _pipeline_should_pause).
+    assert vistos['should_pause'] == tray._pipeline_should_pause
 
 
 class UnaLinea:

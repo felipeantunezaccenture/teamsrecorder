@@ -11,7 +11,9 @@ from pathlib import Path
 
 import mic_status
 from config import MINUTES_DIR, RECORDINGS_DIR, PROJECT_DIR, get_ui_language
+from transcriber import DEFER as _DEFER
 from transcriber import TranscriptionCancelled as _Cancelled
+from transcriber import TranscriptionDeferred as _Deferred
 
 # Trabajos descartados desde la ventana web, que corre en otro proceso.
 _CANCEL_FILE = PROJECT_DIR / '.cancelled_jobs.txt'
@@ -74,6 +76,7 @@ _STR = {
         disk_full='Disco lleno: Noted guarda el audio en memoria y lo escribirá en cuanto haya espacio. Libera espacio.',
         disk_full_reserve='Disco lleno: Noted ha liberado su reserva de {released:.0f} GB y guarda el audio en memoria hasta que haya espacio. Libera espacio.',
         disk_recovered='Hay espacio otra vez: el audio está guardado completo.',
+        deferred='En pausa: se está grabando otra reunión y falta disco o memoria. Sigue al colgar.',
         write_failed='Noted no puede escribir el audio (¿un archivo bloqueado?). Lo guarda en memoria y lo reintenta.',
         save_failed='No se pudo guardar la grabación. El audio se conserva en recordings (archivos .part): revisa el log.',
         disk_low='Queda poco espacio en disco ({gb:.1f} GB). Noted sigue grabando.',
@@ -114,6 +117,7 @@ _STR = {
         disk_full='Disk full: Noted keeps the audio in memory and will write it as soon as there is space. Free up some space.',
         disk_full_reserve='Disk full: Noted released its {released:.0f} GB reserve and keeps the audio in memory until there is space. Free up some space.',
         disk_recovered='Disk space is back: the audio is fully saved.',
+        deferred='Paused: another meeting is recording and disk or memory is low. It continues after the call.',
         write_failed='Noted cannot write the audio (a locked file?). It keeps it in memory and retries.',
         save_failed='The recording could not be saved. The audio is kept in recordings (.part files): check the log.',
         disk_low='Low disk space ({gb:.1f} GB left). Noted keeps recording.',
@@ -132,6 +136,9 @@ log = logging.getLogger(__name__)
 
 # Cada cuanto se mira el disco mientras se graba (ver disk_guard).
 DISK_CHECK_EVERY_S = 20.0
+# Una transcripcion apartada por una grabacion (ver _defer_reason) mira cada
+# tanto si ya puede seguir.
+DEFER_RECHECK_S = 10.0
 # Con el disco al limite, escribir puede fallar y recuperarse cada pocos segundos:
 # como mucho un aviso de cada tipo en este intervalo.
 DISK_TOAST_EVERY_S = 120.0
@@ -450,6 +457,42 @@ class TrayApp:
     def _switch_live_from_menu(self):
         self.switch_to_live()
 
+    def _pipeline_should_pause(self):
+        """should_pause de la transcripcion del pipeline: DEFER si una grabacion
+        necesita el disco o la memoria (_defer_reason); si no, la pausa del modo
+        en vivo (_live_priority)."""
+        if self._defer_reason() is not None:
+            return _DEFER
+        return self._live_priority()
+
+    def _defer_reason(self) -> str | None:
+        """'disco' o 'memoria' si se esta grabando una reunion y la transcripcion
+        de otra ya terminada debe apartarse; None si no.
+
+        26/10/2026, decision de Felipe: grabar va antes que todo. Ese dia, a las
+        16:06, el daemon terminaba con 'medium' la reunion anterior mientras
+        grababa la siguiente, y el pagefile lleno el disco. Los umbrales son los
+        del modo de fondo (live_transcriber): sin el modelo cargado, lo que pide
+        su reserva; ya cargado, los suelos. Sin grabacion, nunca se aparta."""
+        if not getattr(self._recorder, 'is_recording', False):
+            return None
+        try:
+            import live_transcriber
+            import transcriber
+            if transcriber._model is not None:
+                if not live_transcriber._disk_floor_ok():
+                    return 'disco'
+                if not live_transcriber._memory_floor_ok():
+                    return 'memoria'
+                return None
+            if not live_transcriber._disk_ok(transcriber.WHISPER_MODEL):
+                return 'disco'
+            if not live_transcriber._memory_ok(transcriber.WHISPER_MODEL):
+                return 'memoria'
+        except Exception as e:
+            log.warning(f"No se pudo comprobar el margen para transcribir: {e}")
+        return None
+
     def _live_priority(self) -> bool:
         """El modo en vivo tiene prioridad: mientras dure, el pipeline se pausa.
         Deja de pausarse si el proceso en vivo fallo, termino o espera memoria:
@@ -501,10 +544,12 @@ class TrayApp:
         except Exception as e:
             log.warning(f"_claim_whisper: {e}")
 
-    def _release_whisper(self):
+    def _release_whisper(self, force: bool = False):
         """Fin de un trabajo del pipeline. El modelo vuelve al proceso de fondo
-        solo cuando no queda nada en cola: la reunion mas antigua termina primero."""
-        if not self._pipeline_queue.empty():
+        solo cuando no queda nada en cola: la reunion mas antigua termina primero.
+        Con force, tambien con cola: el pipeline se aparto por una grabacion y no
+        va a usar Whisper hasta que termine (ver _run_pipeline_until_done)."""
+        if not force and not self._pipeline_queue.empty():
             return
         with self._whisper_lock:
             if not self._whisper_busy:
@@ -870,7 +915,7 @@ class TrayApp:
                 if self._is_cancelled(wav_path.stem):
                     self._discard_job(wav_path, 'descartada en cola')
                     continue
-                self._run_pipeline_sync(wav_path)
+                self._run_pipeline_until_done(wav_path)
             except _Cancelled as c:
                 # Descartada a mitad del proceso. c.minutes_path apunta a las
                 # minutas si ya se habían escrito, para que también se vayan.
@@ -881,6 +926,45 @@ class TrayApp:
                 self.set_processing('')
             finally:
                 self._release_whisper()
+
+    def _run_pipeline_until_done(self, wav_path: Path):
+        """_run_pipeline_sync; si se aparta por una grabacion (TranscriptionDeferred),
+        espera a que la grabacion termine y lo repite desde lo hecho: el .partial o
+        el .live.jsonl. No reintenta antes: cada intento paga una carga del modelo
+        (30-60 s, el pico de memoria) y, si volviera a apartarse antes de cerrar un
+        trozo, no avanzaria (revision del 26/10/2026)."""
+        import gc
+        while True:
+            try:
+                return self._run_pipeline_sync(wav_path)
+            except _Deferred:
+                pass
+            # Fuera del except: mientras la excepcion vive, su traceback retiene el
+            # generador de faster-whisper y con el el modelo (4,7 GB de reserva).
+            gc.collect()
+            self._wait_while_deferred(wav_path)
+
+    def _wait_while_deferred(self, wav_path: Path):
+        reason = self._defer_reason() or 'disco o memoria'
+        log.warning(f"Transcripción de {wav_path.name} en pausa: se está grabando otra reunión "
+                    f"y falta {reason}. Sigue al colgar")
+        s = _STR.get(get_ui_language(), _STR['en'])
+        self.set_processing(s['deferred'])
+        # La transcripcion de fondo de la reunion en curso recupera el modelo: con
+        # sus propios umbrales decide si puede transcribir mientras tanto.
+        self._release_whisper(force=True)
+        t0 = time.monotonic()
+        while self._recording_or_saving():
+            if self._is_cancelled(wav_path.stem):
+                raise _Cancelled()
+            time.sleep(DEFER_RECHECK_S)
+        log.info(f"Transcripción de {wav_path.name}: sigue tras {time.monotonic() - t0:.0f} s en pausa")
+
+    def _recording_or_saving(self) -> bool:
+        """Grabando, o guardando el WAV de la que acaba de terminar (con el disco
+        lleno el guardado espera sitio, y cargar 'medium' se lo quitaria)."""
+        rec = self._recorder
+        return bool(getattr(rec, 'is_recording', False) or getattr(rec, 'is_saving', False))
 
     def _run_pipeline_sync(self, wav_path: Path):
         from storage import get_transcript_path
@@ -903,6 +987,10 @@ class TrayApp:
 
         lang_path = transcript_path.with_suffix('.lang')
         if not transcript_path.exists():
+            # Antes de pedir el modelo a la transcripcion de fondo de la reunion en
+            # curso: si de todos modos hay que apartarse, que ella siga.
+            if self._defer_reason() is not None:
+                raise _Deferred()
             self._claim_whisper()
             self._use_live_transcript(wav_path, transcript_path, lang_path)
         if transcript_path.exists():
@@ -934,7 +1022,7 @@ class TrayApp:
 
             result = transcribe(wav_path, on_progress=on_progress, on_segment=on_seg,
                                 should_cancel=lambda: self._is_cancelled(wav_path.stem),
-                                resume_from=partial_path, should_pause=self._live_priority)
+                                resume_from=partial_path, should_pause=self._pipeline_should_pause)
             if partial_path.exists():
                 partial_path.unlink()
 
@@ -1002,7 +1090,7 @@ class TrayApp:
                 wav_path,
                 on_progress=lambda pct: self.set_processing(f'Transcribiendo {pct}%...'),
                 should_cancel=lambda: self._is_cancelled(wav_path.stem),
-                should_pause=self._live_priority,
+                should_pause=self._pipeline_should_pause,
                 hotwords=glossary_ctx['hotwords'])
             text, lang = result if result is not None else ('', '')
             if text.strip():
@@ -1027,7 +1115,8 @@ class TrayApp:
             # Si no, camino de siempre. Los ficheros en vivo se quitan cuando ese
             # termine bien (_discard_live_files): si fallara, serian el unico
             # texto de la reunion.
-        except _Cancelled:
+        except (_Cancelled, _Deferred):
+            # Aplazada no es "el en vivo no sirve": empezar de cero perderia lo hecho.
             raise
         except Exception as e:
             log.warning(f"Transcript en vivo no utilizable para {wav_path.name} ({e}): "
