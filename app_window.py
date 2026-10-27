@@ -92,6 +92,92 @@ _MAX_ASK_SESSIONS = 2
 # Conversaciones cuya vista se cerro: si su pregunta vuelve sin sesion, no se
 # lanza la red de una sola vez (nadie va a ver la respuesta).
 _ask_closed: set = set()
+# El barrido que cierra las sesiones sin usar. Antes solo se miraban al abrir
+# otra conversacion: el 27/10/2026 un panel abierto desde la tarde anterior
+# tenia dos claude (~480 MB de reserva cada uno) con el disco a 0,86 GB.
+_ASK_SWEEP_S = 30
+_ask_sweeper = None
+_ask_yielding = False
+
+
+def _recording_now() -> bool:
+    """.recording_active, si su PID es un Python vivo: si el daemon murio
+    grabando, el archivo se queda hasta la siguiente grabacion. El criterio de
+    Get-TRLivePid (tr_env.ps1)."""
+    try:
+        pid = int((PROJECT_DIR / '.recording_active').read_text(encoding='utf-8').strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        import psutil
+    except ImportError:
+        return True
+    try:
+        return 'python' in psutil.Process(pid).name().lower()
+    except psutil.Error:
+        return False
+
+
+def _ask_yield_reason() -> str | None:
+    """'disco' o 'memoria' si se esta grabando y falta: grabar va antes (decision
+    de Felipe, 26/10/2026), asi que entonces no se deja ningun claude abierto.
+    Los umbrales, los de siempre: el aviso de disco, con su histeresis, y el
+    suelo de memoria del modo de fondo."""
+    global _ask_yielding
+    reason = None
+    if _recording_now():
+        import disk_guard
+        import live_transcriber
+        free = disk_guard.system_free_gb()
+        limit = disk_guard.WARN_CLEAR_GB if _ask_yielding else disk_guard.WARN_GB
+        if free is not None and free < limit:
+            reason = 'disco'
+        elif not live_transcriber._memory_floor_ok():
+            reason = 'memoria'
+    _ask_yielding = reason is not None
+    return reason
+
+
+def _sweep_ask_sessions() -> None:
+    """Cierra las que llevan IDLE_S sin usarse o han muerto y, grabando con poco
+    disco o memoria, todas. Nunca una que este respondiendo."""
+    reason = _ask_yield_reason()
+    to_close = []
+    with _ask_sessions_lock:
+        for k, s in list(_ask_sessions.items()):
+            if not s.busy() and (reason or s.idle() or not s.alive()):
+                to_close.append((k, _ask_sessions.pop(k)))
+    for k, s in to_close:
+        log.info(f"meeting_qa: sesion {k} cerrada ({'grabando con poco ' + reason if reason else 'sin usar'})")
+        s.close()
+
+
+def _ask_sweep_loop() -> None:
+    import time
+    global _ask_sweeper
+    while True:
+        time.sleep(_ASK_SWEEP_S)
+        try:
+            _sweep_ask_sessions()
+        except Exception as e:
+            log.warning(f"meeting_qa: barrido de sesiones: {e}")
+        with _ask_sessions_lock:
+            if not _ask_sessions:
+                _ask_sweeper = None
+                return
+
+
+def _ensure_ask_sweeper() -> None:
+    """Con _ask_sessions_lock tomado: corre mientras haya sesiones abiertas."""
+    global _ask_sweeper
+    if _ask_sweeper is None:
+        t = threading.Thread(target=_ask_sweep_loop, daemon=True, name='AskSweeper')
+        try:
+            t.start()
+        except RuntimeError as e:             # sin memoria: se reintenta con la siguiente sesion
+            log.warning(f"meeting_qa: no se pudo arrancar el barrido de sesiones: {e}")
+            return
+        _ask_sweeper = t
 
 
 def _ask_session(key: str, create: bool = True):
@@ -100,6 +186,7 @@ def _ask_session(key: str, create: bool = True):
     es el de Ajustes. Nunca cierra una que este respondiendo ni la en vivo por
     hacer sitio (revision del 20/10/2026). Los cierres, fuera del lock: cada
     uno puede tardar hasta 3 s."""
+    import time
     import meeting_qa
     import transcriber
     to_close = []
@@ -111,8 +198,11 @@ def _ask_session(key: str, create: bool = True):
         if s is not None and not s.busy() and (not s.alive() or s.model != meeting_qa.qa_model()):
             to_close.append(_ask_sessions.pop(key))
             s = None
-        if s is None and create:
+        if s is not None:
+            s.last_used = time.monotonic()    # pedirla es usarla: que el barrido no la cierre ahora
+        elif create:
             s = _ask_sessions[key] = meeting_qa.Session(me_label=transcriber.ME_NAME or 'Grabador')
+            _ensure_ask_sweeper()
             # Cada sesion es un proceso: como mucho dos abiertas (la de la reunion
             # en curso y la ultima consultada). Si las demas estan ocupadas o son
             # la en vivo, se pasa del tope un rato antes que cortar una respuesta.
@@ -3518,11 +3608,22 @@ class AppAPI:
 
         def run():
             try:
-                r = _ask_session(key).ask(lines, question, hist, on_text=on_text)
-                if r['error'] == 'session_dead' and key in _ask_closed:
-                    r['error'] = 'closed'
-                elif r['error'] == 'session_dead':
-                    # Red: una sola vez, sin sesion. Paga el arranque, pero responde.
+                # Una sola vez, sin sesion: paga el arranque, pero responde. Es la
+                # red si la sesion muere, y lo de siempre grabando con poco disco
+                # o memoria: asi el claude termina al responder.
+                one_shot = _ask_yield_reason() is not None
+                if one_shot:
+                    # Antes de abrir otro claude, cerrar las que hubiera. Y una que
+                    # siguiera abierta no veria esta pregunta: la siguiente sesion
+                    # arranca con el historial.
+                    _sweep_ask_sessions()
+                else:
+                    r = _ask_session(key).ask(lines, question, hist, on_text=on_text)
+                    if r['error'] == 'session_dead' and key in _ask_closed:
+                        r['error'] = 'closed'
+                    elif r['error'] == 'session_dead':
+                        one_shot = True
+                if one_shot:
                     r = meeting_qa.ask(lines, question, hist, me_label=transcriber.ME_NAME or 'Grabador',
                                        on_text=on_text)
                 state['text'] = r['text'] or state['text']
@@ -3549,8 +3650,9 @@ class AppAPI:
 
     def ask_warmup(self, source: str, ref: str) -> bool:
         """Abre ya la sesion de claude de esa conversacion: arrancar cuesta
-        9,5-12 s, y asi la primera pregunta responde en un par de segundos."""
-        if self._ask_ref_error(source, ref):
+        9,5-12 s, y asi la primera pregunta responde en un par de segundos.
+        Grabando con poco disco o memoria, no: la pregunta ira sin sesion."""
+        if self._ask_ref_error(source, ref) or _ask_yield_reason():
             return False
         threading.Thread(target=_ask_session, args=(f'{source}:{ref}',), daemon=True,
                          name='AskWarmup').start()

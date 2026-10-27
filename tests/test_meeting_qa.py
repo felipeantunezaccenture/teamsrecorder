@@ -11,6 +11,7 @@ Aqui se protege la fontaneria, que es lo que puede fallar en silencio:
 """
 import io
 import json
+import os
 import queue
 import threading
 import time
@@ -345,10 +346,16 @@ def test_mientras_responde_la_sesion_no_cuenta_como_inactiva(cli):
 
 # ── La API del panel ─────────────────────────────────────────────────────────
 
+ENSURE_SWEEPER = getattr(aw, '_ensure_ask_sweeper', None)
+
+
 @pytest.fixture
 def api(monkeypatch):
     aw._ask_runs.clear()
     aw._close_ask_sessions()
+    # El barrido de fondo, solo en el test que lo prueba: en los demas no hace
+    # falta y seguiria vivo entre tests.
+    monkeypatch.setattr(aw, '_ensure_ask_sweeper', lambda: None, raising=False)
     a = object.__new__(aw.AppAPI)
     yield a
     aw._close_ask_sessions()
@@ -476,6 +483,174 @@ def test_cerrar_la_vista_cierra_su_sesion(api, cli):
     aw._ask_session('live:a')
     assert api.ask_close('live', 'a') is True
     assert proc.stdin.closed and 'live:a' not in aw._ask_sessions
+
+
+# ── Las sesiones que nadie usa se cierran solas (27/10/2026) ────────────────
+# Un panel abierto desde la tarde anterior tenia dos claude (~480 MB de reserva
+# cada uno) con el disco a 0,86 GB: los 10 min sin uso solo se miraban al abrir
+# otra conversacion.
+
+def abierta(cli, key):
+    cli['next'].append(SessionProc([]))
+    return aw._ask_session(key)
+
+
+def test_una_sesion_sin_usar_se_cierra_sola(api, cli):
+    s = abierta(cli, 'meeting:a')
+    s.last_used -= 10_000
+    aw._sweep_ask_sessions()
+    assert s.proc.stdin.closed and 'meeting:a' not in aw._ask_sessions
+
+
+def test_el_barrido_no_cierra_una_reciente_ni_una_que_responde(api, cli):
+    reciente = abierta(cli, 'meeting:a')
+    ocupada = abierta(cli, 'live:b')
+    ocupada.last_used -= 10_000
+    ocupada._lock.acquire()
+    try:
+        aw._sweep_ask_sessions()
+    finally:
+        ocupada._lock.release()
+    assert reciente.alive() and ocupada.alive()
+    assert set(aw._ask_sessions) == {'meeting:a', 'live:b'}
+
+
+def test_pedir_la_sesion_cuenta_como_uso(api, cli):
+    """Si no, el barrido podia cerrarla entre pedirla y preguntar."""
+    s = abierta(cli, 'meeting:a')
+    s.last_used -= 10_000
+    assert aw._ask_session('meeting:a') is s and not s.idle()
+
+
+def test_el_barrido_corre_mientras_haya_sesiones(api, cli, monkeypatch):
+    monkeypatch.setattr(aw, '_ASK_SWEEP_S', 0.01)
+    monkeypatch.setattr(aw, '_ensure_ask_sweeper', ENSURE_SWEEPER)
+    s = abierta(cli, 'meeting:a')
+    hilo = aw._ask_sweeper
+    time.sleep(0.2)                                  # unas cuantas vueltas
+    assert hilo.is_alive() and s.alive(), "con una sesion reciente sigue, sin cerrarla"
+    s.last_used -= 10_000
+    hilo.join(5)
+    assert not hilo.is_alive(), "sin sesiones, el barrido termina"
+    assert s.proc.stdin.closed and aw._ask_sweeper is None
+    abierta(cli, 'meeting:b')
+    assert aw._ask_sweeper is not None and aw._ask_sweeper is not hilo, "y vuelve con la siguiente"
+
+
+def test_si_el_barrido_no_arranca_se_reintenta(api, monkeypatch):
+    """Revision del 27/10/2026: sin memoria, start() lanza, y dejaba puesto un
+    hilo que nunca arranco: no se volvia a intentar."""
+    class SinHilos(aw.threading.Thread):
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(aw.threading, 'Thread', SinHilos)
+    monkeypatch.setattr(aw, '_ask_sweeper', None)
+    ENSURE_SWEEPER()
+    assert aw._ask_sweeper is None
+
+
+@pytest.fixture
+def grabando(tr_dirs, monkeypatch):
+    """Se esta grabando; el disco y la memoria, a gusto de cada test."""
+    import disk_guard
+    import live_transcriber
+    estado = {'disco': 50.0, 'memoria': True}
+    monkeypatch.setattr(disk_guard, 'system_free_gb', lambda: estado['disco'])
+    monkeypatch.setattr(live_transcriber, '_memory_floor_ok', lambda: estado['memoria'])
+    monkeypatch.setattr(aw, '_ask_yielding', False)
+    (tr_dirs / '.recording_active').write_text(str(os.getpid()))   # el de pytest: un python vivo
+    return estado
+
+
+def test_sin_grabacion_nunca_cede(tr_dirs, monkeypatch):
+    import disk_guard
+    import live_transcriber
+    monkeypatch.setattr(disk_guard, 'system_free_gb', lambda: 0.5)
+    monkeypatch.setattr(live_transcriber, '_memory_floor_ok', lambda: False)
+    assert aw._ask_yield_reason() is None
+
+
+@pytest.mark.parametrize('proceso', ['muerto', 'otro programa'])
+def test_el_aviso_de_una_grabacion_que_murio_no_cuenta(grabando, monkeypatch, proceso):
+    """Revision del 27/10/2026: si el daemon muere grabando, .recording_active
+    se queda hasta la siguiente grabacion."""
+    import psutil
+
+    class Otro:
+        def __init__(self, pid):
+            if proceso == 'muerto':
+                raise psutil.NoSuchProcess(pid)
+
+        def name(self):
+            return 'explorer.exe'
+
+    monkeypatch.setattr(psutil, 'Process', Otro)
+    grabando['disco'] = 0.5
+    assert aw._ask_yield_reason() is None
+
+
+def test_grabando_cede_con_poco_disco_o_poca_memoria(grabando):
+    assert aw._ask_yield_reason() is None
+    grabando['disco'] = 2.0
+    assert aw._ask_yield_reason() == 'disco'
+    grabando.update(disco=50.0, memoria=False)
+    assert aw._ask_yield_reason() == 'memoria'
+
+
+def test_el_disco_tiene_histeresis(grabando):
+    """Revision del 27/10/2026: rondando los 3 GB, se alternaba entre sesion y
+    una sola vez, y la sesion vieja no veia las preguntas de en medio."""
+    grabando['disco'] = 2.9
+    assert aw._ask_yield_reason() == 'disco'
+    grabando['disco'] = 3.5
+    assert aw._ask_yield_reason() == 'disco', "sigue cediendo hasta WARN_CLEAR_GB"
+    grabando['disco'] = 4.1
+    assert aw._ask_yield_reason() is None
+    grabando['disco'] = 3.5
+    assert aw._ask_yield_reason() is None
+
+
+def test_grabando_con_poco_disco_se_cierran_las_que_no_responden(api, cli, grabando):
+    reciente = abierta(cli, 'live:a')
+    ocupada = abierta(cli, 'meeting:b')
+    grabando['disco'] = 2.0
+    ocupada._lock.acquire()
+    try:
+        aw._sweep_ask_sessions()
+    finally:
+        ocupada._lock.release()
+    assert reciente.proc.stdin.closed and ocupada.alive()
+    assert set(aw._ask_sessions) == {'meeting:b'}
+
+
+def test_grabando_con_poco_disco_no_se_precalienta(api, cli, grabando):
+    grabando['disco'] = 2.0
+    assert api.ask_warmup('live', 'reunion') is False
+    time.sleep(0.05)
+    assert cli['calls'] == [] and aw._ask_sessions == {}
+
+
+def test_grabando_con_poco_disco_la_pregunta_no_deja_un_claude_abierto(api, cli, grabando, monkeypatch):
+    monkeypatch.setattr(api, 'get_live_transcript', lambda stem: {'lines': LINES}, raising=False)
+    grabando['disco'] = 2.0
+    cli['next'].append(OneShot(turn('En la sala Nube.')))
+    st = esperar_respuesta(api, api.ask_meeting('live', 'reunion', '¿Dónde?')['run_id'])
+    assert st['text'] == 'En la sala Nube.' and st['error'] is None
+    assert '--input-format' not in cli['calls'][0]['cmd'], "una sola vez, no una sesion"
+    assert aw._ask_sessions == {}
+
+
+def test_grabando_con_poco_disco_la_pregunta_cierra_antes_la_sesion_abierta(api, cli, grabando, monkeypatch):
+    """Si siguiera abierta, habria dos claude a la vez, y al volver a ella no
+    veria esta pregunta (revision del 27/10/2026)."""
+    monkeypatch.setattr(api, 'get_live_transcript', lambda stem: {'lines': LINES}, raising=False)
+    vieja = abierta(cli, 'live:reunion')
+    grabando['disco'] = 2.0
+    cli['next'].append(OneShot(turn('En la sala Nube.')))
+    st = esperar_respuesta(api, api.ask_meeting('live', 'reunion', '¿Dónde?')['run_id'])
+    assert st['text'] == 'En la sala Nube.'
+    assert vieja.proc.stdin.closed and aw._ask_sessions == {}
 
 
 def test_las_preguntas_no_dejan_nada_en_disco(api, cli, monkeypatch, tr_dirs):
