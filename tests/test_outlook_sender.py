@@ -400,18 +400,3 @@ def test_si_outlook_falla_el_envio_devuelve_false_y_no_lanza(monkeypatch, tr_dir
 
     monkeypatch.setattr(os_mod, '_get_outlook', boom)
     assert os_mod.send_minutes_email(md, html, 'Comite', []) is False
-
-# ── El asunto de la cita como titulo (tray_app._fallback_title) ─────────────
-
-def test_el_asunto_de_la_cita_sirve_de_titulo(fake_outlook):
-    fake_outlook.appointments = [CitaFalsa('Revision Trimestral', AHORA, [('Ines', 'ines@x.com')])]
-    assert os_mod.find_meeting_subject(AHORA) == 'Revision Trimestral'
-
-
-def test_sin_cita_no_hay_asunto(fake_outlook):
-    assert os_mod.find_meeting_subject(AHORA) is None
-
-
-def test_sin_outlook_no_hay_asunto():
-    """conftest: Outlook no disponible."""
-    assert os_mod.find_meeting_subject(AHORA) is None

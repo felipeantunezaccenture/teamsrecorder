@@ -98,7 +98,8 @@ def _handle_cli_command(cmd, recorder, tray, get_recording_path):
     if cmd in ('start', 'start-live') and not recorder.is_recording:
         path = get_recording_path('cli')
         recorder.on_recording_stopped = tray._on_recording_done
-        recorder.start(path)
+        if recorder.start(path) is False:
+            return      # ya se grababa (ver AudioRecorder.start)
         tray.set_recording(True, path, mode='live' if cmd == 'start-live' else 'background')
         log.info("Grabación iniciada por CLI")
     elif cmd == 'live' or cmd.startswith('live '):

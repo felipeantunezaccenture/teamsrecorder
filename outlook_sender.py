@@ -122,21 +122,30 @@ def find_meeting_participants(recording_time: datetime, meeting_name: str = None
         return []
 
 
-def find_meeting_subject(recording_time: datetime, meeting_name: str = None) -> str | None:
-    """El asunto de la cita del calendario de esta grabacion, o None. Es el
+def find_meeting_subject(recording_time: datetime) -> str | None:
+    """El asunto de la cita que EMPIEZA junto a la grabacion, o None. Es el
     titulo de la reunion cuando no hay otro (una grabacion manual fuera de
-    Teams y sin Claude)."""
+    Teams y sin Claude). Mas estricto que find_meeting_participants: una cita
+    cancelada o rechazada, o la anterior que sigue en curso, darian a la
+    reunion el nombre de otra."""
     try:
-        item = _find_meeting_item(recording_time, meeting_name)
+        item = _find_meeting_item(recording_time, None, for_title=True)
         return ((item.Subject or '').strip() or None) if item is not None else None
     except Exception as e:
         log.warning(f"No se pudo leer el asunto de la reunión en Outlook: {e}")
         return None
 
 
-def _find_meeting_item(recording_time: datetime, meeting_name: str = None):
+# MeetingStatus: olMeetingCanceled, olMeetingReceivedAndCanceled. ResponseStatus: olResponseDeclined.
+_CANCELED_STATUS = (5, 7)
+_DECLINED_RESPONSE = 4
+
+
+def _find_meeting_item(recording_time: datetime, meeting_name: str = None, for_title: bool = False):
     """La cita del calendario que corresponde a la grabacion, o None. Empareja
-    por NOMBRE y, como respaldo, por HORA (ver find_meeting_participants)."""
+    por NOMBRE y, como respaldo, por HORA (ver find_meeting_participants).
+    for_title: solo una cita que empiece junto a la grabacion, ni cancelada ni
+    rechazada (ver find_meeting_subject)."""
     outlook = _get_outlook()
     ns = outlook.GetNamespace('MAPI')
     calendar = ns.GetDefaultFolder(9)  # olFolderCalendar
@@ -161,6 +170,9 @@ def _find_meeting_item(recording_time: datetime, meeting_name: str = None):
     for item in filtered:
         try:
             if getattr(item, 'AllDayEvent', False):
+                continue
+            if for_title and (getattr(item, 'MeetingStatus', 0) in _CANCELED_STATUS
+                              or getattr(item, 'ResponseStatus', 0) == _DECLINED_RESPONSE):
                 continue
             item_start = _naive(item.Start)
             if not hasattr(item_start, 'year'):
@@ -203,6 +215,8 @@ def _find_meeting_item(recording_time: datetime, meeting_name: str = None):
         near = [c for c in candidates if c[1] <= _MAX_TIME_FALLBACK]
         if near:
             best_item = min(near, key=lambda x: x[1])[0]
+        elif for_title:
+            return None
         else:
             running = [c for c in candidates if c[2]]
             if not running:
