@@ -544,17 +544,11 @@
 
           <div class="settings-card-desc" data-i18n="diag_desc">Comprueba si puedes grabar ahora mismo: el grabador, el vigilante, tu micrófono y el sonido del ordenador. Incluye una prueba que hace sonar un tono y te graba para confirmar que te capta.</div>
 
-          <div style="display:flex;justify-content:flex-end;margin-top:10px">
-
-            <button class="btn btn-primary btn-sm" onclick="openDiagnostics()" data-i18n="diag_btn">Abrir diagnóstico</button>
-
-          </div>
-
-          <!-- margin-top:auto lo empuja al fondo de la tarjeta -->
-          <div style="display:flex;justify-content:center;margin-top:auto;padding-top:16px">
-
+          <!-- Los dos botones en una sola fila, alineados a la derecha como en el resto de tarjetas;
+               margin-top:auto la empuja al fondo si la tarjeta es mas alta -->
+          <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:auto;padding-top:10px">
             <button class="btn btn-ghost btn-sm" onclick="restartNoted()" data-i18n="diag_restart_btn">Reiniciar Noted</button>
-
+            <button class="btn btn-primary btn-sm" onclick="openDiagnostics()" data-i18n="diag_btn">Abrir diagnóstico</button>
           </div>
 
         </div>
