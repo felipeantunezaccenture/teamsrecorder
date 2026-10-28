@@ -155,9 +155,17 @@ def background_enabled() -> bool:
     """`background_transcription`: transcribir durante la reunion en el modo por
     defecto. Activado si falta la clave; si el fichero no se puede leer se queda
     apagado, que es la app de siempre. El modo en vivo no depende de esto: lo
-    pide el usuario expresamente."""
+    pide el usuario expresamente.
+
+    Tambien lo apagan los interruptores de la transcripcion en vivo anterior
+    (77140da), para que quien la tenia apagada no la encuentre encendida:
+    `live_transcription: false` en settings.json o LIVE_TRANSCRIPTION=0."""
     s = _settings()
-    return s is not None and s.get('background_transcription', True) is not False
+    if s is None or s.get('background_transcription', True) is False:
+        return False
+    if s.get('live_transcription', True) is False:
+        return False
+    return os.getenv('LIVE_TRANSCRIPTION', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 def final_enabled() -> bool:

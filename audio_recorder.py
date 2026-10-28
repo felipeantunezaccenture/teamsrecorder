@@ -12,7 +12,7 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
-from config import SAMPLE_RATE, PROJECT_DIR, LIVE_TRANSCRIPTION
+from config import SAMPLE_RATE, PROJECT_DIR
 
 _RECORDING_SENTINEL = PROJECT_DIR / '.recording_active'
 
@@ -107,8 +107,6 @@ class AudioRecorder:
         # Instante en que arrancó el micrófono, para compensar el retraso con
         # que se abre el loopback en segundo plano.
         self._mic_t0: float | None = None
-        # Transcripción en vivo de la grabación en curso (live_transcriber.py).
-        self._live = None
 
         # True si se está capturando el audio del sistema. Cuando es False la
         # grabación solo contiene tu micrófono, y con auriculares eso significa
@@ -140,7 +138,6 @@ class AudioRecorder:
             self._recording = False
             self._close_inputs()
             self._close_writers()
-            self._release_live(discard=True)
             self._save_event.set()
             raise
 
@@ -193,23 +190,12 @@ class AudioRecorder:
         _write_sentinel()
         log.info(f"Recording started → {output_path}")
 
-        if LIVE_TRANSCRIPTION:
-            try:
-                from live_transcriber import start_for
-                self._live = start_for(output_path, self._tmp_mic, self._tmp_loop)
-            except Exception as e:
-                # Es un extra: sin él la reunión se transcribe al terminar.
-                self._live = None
-                log.warning(f"Transcripción en vivo no disponible: {e}")
-
     def stop(self) -> Path | None:
         if not self._recording:
             return None
         self._recording = False
         self._close_inputs()
         self._close_writers()
-        if self._live:
-            self._live.stop()
 
         t = threading.Thread(
             target=self._process_and_save, daemon=True, name='AudioProcessor',
@@ -224,22 +210,10 @@ class AudioRecorder:
         self._recording = False
         self._close_inputs()
         self._close_writers()
-        self._release_live(discard=True)
         self._discard_temp()
         _remove_sentinel()
         self._save_event.set()
         log.info("Recording cancelled — audio discarded")
-
-    def _release_live(self, discard: bool = False):
-        """Suelta el hilo en vivo antes de borrar los .part (ver _io_lock)."""
-        live, self._live = self._live, None
-        if not live:
-            return
-        live.stop()
-        live.quiesce()
-        if discard and self._output_path:
-            from live_transcriber import discard_for
-            discard_for(self._output_path)
 
     def wait_for_save(self, timeout: int = 60) -> bool:
         return self._save_event.wait(timeout=timeout)
@@ -705,7 +679,6 @@ class AudioRecorder:
         except Exception as e:
             log.error(f"Error guardando WAV: {e}", exc_info=True)
         finally:
-            self._release_live()
             self._discard_temp()
             _remove_sentinel()
             self._save_event.set()

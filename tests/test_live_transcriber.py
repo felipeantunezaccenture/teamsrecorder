@@ -463,6 +463,26 @@ def test_lo_que_guarda_ajustes_es_lo_que_lee_la_app(tr_dirs, ajustes, de_fondo, 
     assert lt.final_enabled() is definitivo
 
 
+@pytest.mark.parametrize('contenido, entorno, esperado', [
+    ('{"live_transcription": false}', None, False),
+    ('{"live_transcription": true}', None, True),
+    ('{}', '0', False),
+    ('{}', 'off', False),
+    ('{}', '1', True),
+])
+def test_los_interruptores_de_la_version_anterior_la_siguen_apagando(
+        tr_dirs, monkeypatch, contenido, entorno, esperado):
+    """77140da (main) tenia su propia transcripcion en vivo, que se apagaba con
+    "live_transcription": false o LIVE_TRANSCRIPTION=0. Quien la tenia apagada
+    no debe encontrarse esta encendida al actualizar."""
+    (tr_dirs / 'settings.json').write_text(contenido, encoding='utf-8')
+    if entorno is None:
+        monkeypatch.delenv('LIVE_TRANSCRIPTION', raising=False)
+    else:
+        monkeypatch.setenv('LIVE_TRANSCRIPTION', entorno)
+    assert lt.background_enabled() is esperado
+
+
 # ── Opcional: el transcript en vivo como definitivo (modo rapido) ───────────
 
 @pytest.fixture
