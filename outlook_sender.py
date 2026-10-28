@@ -93,80 +93,9 @@ def find_meeting_participants(recording_time: datetime, meeting_name: str = None
     'meeting_subject' con el asunto de la cita elegida.
     """
     try:
-        outlook = _get_outlook()
-        ns = outlook.GetNamespace('MAPI')
-        calendar = ns.GetDefaultFolder(9)  # olFolderCalendar
-
-        rec_time = _naive(recording_time)
-        # Desde 4 h antes: una reunión larga a la que entras tarde empezó mucho
-        # antes de que se disparase la grabación.
-        start = rec_time - timedelta(hours=4)
-        end   = rec_time + timedelta(hours=3)
-
-        items = calendar.Items
-        items.Sort('[Start]')
-        items.IncludeRecurrences = True
-
-        filter_str = (
-            f"[Start] >= '{start.strftime('%m/%d/%Y %I:%M %p')}' AND "
-            f"[Start] <= '{end.strftime('%m/%d/%Y %I:%M %p')}'"
-        )
-        filtered = items.Restrict(filter_str)
-
-        candidates = []
-        for item in filtered:
-            try:
-                if getattr(item, 'AllDayEvent', False):
-                    continue
-                item_start = _naive(item.Start)
-                if not hasattr(item_start, 'year'):
-                    continue
-                try:
-                    item_end = _naive(item.End)
-                except Exception:
-                    item_end = item_start
-                running = item_start <= rec_time <= item_end
-                candidates.append((item, abs(item_start - rec_time), running, item_start))
-            except Exception as e:
-                log.warning(f"Cita de calendario ilegible: {e}")
-                continue
-
-        if not candidates:
-            log.info(f"Calendario sin citas cerca de {rec_time:%d/%m %H:%M}")
-            return []
-
-        best_item = None
-
-        if meeting_name:
-            scored = []
-            for item, diff, *_ in candidates:
-                try:
-                    subj = item.Subject or ''
-                except Exception:
-                    subj = ''
-                score = _name_score(meeting_name, subj)
-                if score >= 0.5:
-                    scored.append((score, diff, item))
-            if scored:
-                scored.sort(key=lambda x: (-x[0], x[1]))
-                best_item = scored[0][2]
-                log.info(f"Reunión emparejada por nombre (score {scored[0][0]:.2f}): {best_item.Subject}")
-
+        best_item = _find_meeting_item(recording_time, meeting_name)
         if best_item is None:
-            # Primero las que EMPIEZAN junto a la grabación. Las que ya estaban
-            # en marcha (la reunión anterior, que aún no ha acabado) solo valen
-            # si no hay ninguna: con las dos a distancia 0 ganaba la anterior.
-            near = [c for c in candidates if c[1] <= _MAX_TIME_FALLBACK]
-            if near:
-                best_item = min(near, key=lambda x: x[1])[0]
-            else:
-                running = [c for c in candidates if c[2]]
-                if not running:
-                    log.info("Ninguna cita casa por nombre, empieza a menos de "
-                             f"{_MAX_TIME_FALLBACK.seconds // 60} min ni está en curso")
-                    return []
-                best_item = max(running, key=lambda x: x[3])[0]
-            log.info(f"Reunión emparejada por hora: {best_item.Subject}")
+            return []
 
         try:
             subject = best_item.Subject or ''
@@ -191,6 +120,98 @@ def find_meeting_participants(recording_time: datetime, meeting_name: str = None
     except Exception as e:
         log.warning(f"No se pudieron obtener participantes de Outlook: {e}")
         return []
+
+
+def find_meeting_subject(recording_time: datetime, meeting_name: str = None) -> str | None:
+    """El asunto de la cita del calendario de esta grabacion, o None. Es el
+    titulo de la reunion cuando no hay otro (una grabacion manual fuera de
+    Teams y sin Claude)."""
+    try:
+        item = _find_meeting_item(recording_time, meeting_name)
+        return ((item.Subject or '').strip() or None) if item is not None else None
+    except Exception as e:
+        log.warning(f"No se pudo leer el asunto de la reunión en Outlook: {e}")
+        return None
+
+
+def _find_meeting_item(recording_time: datetime, meeting_name: str = None):
+    """La cita del calendario que corresponde a la grabacion, o None. Empareja
+    por NOMBRE y, como respaldo, por HORA (ver find_meeting_participants)."""
+    outlook = _get_outlook()
+    ns = outlook.GetNamespace('MAPI')
+    calendar = ns.GetDefaultFolder(9)  # olFolderCalendar
+
+    rec_time = _naive(recording_time)
+    # Desde 4 h antes: una reunión larga a la que entras tarde empezó mucho
+    # antes de que se disparase la grabación.
+    start = rec_time - timedelta(hours=4)
+    end   = rec_time + timedelta(hours=3)
+
+    items = calendar.Items
+    items.Sort('[Start]')
+    items.IncludeRecurrences = True
+
+    filter_str = (
+        f"[Start] >= '{start.strftime('%m/%d/%Y %I:%M %p')}' AND "
+        f"[Start] <= '{end.strftime('%m/%d/%Y %I:%M %p')}'"
+    )
+    filtered = items.Restrict(filter_str)
+
+    candidates = []
+    for item in filtered:
+        try:
+            if getattr(item, 'AllDayEvent', False):
+                continue
+            item_start = _naive(item.Start)
+            if not hasattr(item_start, 'year'):
+                continue
+            try:
+                item_end = _naive(item.End)
+            except Exception:
+                item_end = item_start
+            running = item_start <= rec_time <= item_end
+            candidates.append((item, abs(item_start - rec_time), running, item_start))
+        except Exception as e:
+            log.warning(f"Cita de calendario ilegible: {e}")
+            continue
+
+    if not candidates:
+        log.info(f"Calendario sin citas cerca de {rec_time:%d/%m %H:%M}")
+        return None
+
+    best_item = None
+
+    if meeting_name:
+        scored = []
+        for item, diff, *_ in candidates:
+            try:
+                subj = item.Subject or ''
+            except Exception:
+                subj = ''
+            score = _name_score(meeting_name, subj)
+            if score >= 0.5:
+                scored.append((score, diff, item))
+        if scored:
+            scored.sort(key=lambda x: (-x[0], x[1]))
+            best_item = scored[0][2]
+            log.info(f"Reunión emparejada por nombre (score {scored[0][0]:.2f}): {best_item.Subject}")
+
+    if best_item is None:
+        # Primero las que EMPIEZAN junto a la grabación. Las que ya estaban
+        # en marcha (la reunión anterior, que aún no ha acabado) solo valen
+        # si no hay ninguna: con las dos a distancia 0 ganaba la anterior.
+        near = [c for c in candidates if c[1] <= _MAX_TIME_FALLBACK]
+        if near:
+            best_item = min(near, key=lambda x: x[1])[0]
+        else:
+            running = [c for c in candidates if c[2]]
+            if not running:
+                log.info("Ninguna cita casa por nombre, empieza a menos de "
+                         f"{_MAX_TIME_FALLBACK.seconds // 60} min ni está en curso")
+                return None
+            best_item = max(running, key=lambda x: x[3])[0]
+        log.info(f"Reunión emparejada por hora: {best_item.Subject}")
+    return best_item
 
 
 def find_meeting_series(recording_time: datetime, title_hint: str = None,

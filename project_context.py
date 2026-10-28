@@ -44,6 +44,38 @@ def detect_project(text: str, meeting_name: str = '', projects: list = None) -> 
     return None
 
 
+# Palabras de nombres de proyecto que no distinguen un proyecto de otro.
+_GENERIC_PROJECT_WORDS = {'project', 'proyecto', 'projecte', 'the', 'and', 'del', 'los', 'las', 'con', 'for'}
+
+
+def project_from_title(title: str, projects: list = None) -> dict | None:
+    """El proyecto que nombra el titulo de la reunion, sin Claude.
+
+    Solo el titulo, nunca el transcript: en una reunion se habla de otros
+    proyectos y otros clientes (el 28/10/2026 una reunion de formacion se tomo
+    por la de otro cliente porque se hablo de agentes). Gana el proyecto con mas palabras
+    de su nombre en el titulo; si empatan, ninguno: archivar una reunion en la
+    carpeta de otro cliente es peor que dejarla sin proyecto.
+    """
+    projects = projects if projects is not None else load_projects()
+    # Tambien un nombre de fichero (20261028_1033_GTM_Sales_Training): _norm deja el '_'.
+    words = set(_norm((title or '').replace('_', ' ')).split())
+    if not words:
+        return None
+    scored = []
+    for p in projects:
+        name = _norm(p.get('name', ''))
+        keys = {w for w in name.split() + _norm(p.get('id', '')).split()
+                if len(w) >= 3 and w not in _GENERIC_PROJECT_WORDS}
+        score = len(keys & words)
+        if score:
+            scored.append((score, p))
+    scored.sort(key=lambda x: -x[0])
+    if not scored or (len(scored) > 1 and scored[1][0] == scored[0][0]):
+        return None
+    return scored[0][1]
+
+
 def _extract_file_text(path: Path) -> str:
     ext = path.suffix.lower()
     try:

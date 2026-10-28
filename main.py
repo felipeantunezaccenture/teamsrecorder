@@ -201,10 +201,18 @@ def main():
                         tray.request_continuation()
                     path = get_recording_path(meeting)
                     try:
-                        recorder.start(path)
+                        started = recorder.start(path)
                     except Exception as e:
                         log.error(f"No se pudo iniciar la grabación: {e}")
                         tray.warn_mic_unavailable(str(e))
+                        return
+                    if started is False:
+                        # Ya se grababa ("Grabar ahora" mientras salia este aviso).
+                        # El 28/10/2026 se trato path como la grabacion en curso: el
+                        # panel mostro otra reunion y se lanzo un segundo transcript
+                        # en vivo de un audio que no existia. El nombre de la reunion
+                        # lo recoge la grabacion en curso (tray._note_teams_title).
+                        log.info(f"Ya se estaba grabando: no se abre otra grabación para '{meeting}'")
                         return
                     tray.set_recording(True, path, mode=mode)
                     log.info(f"{'Continuando (reconexión)' if continuing else 'Grabación iniciada'}"

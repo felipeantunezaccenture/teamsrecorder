@@ -67,6 +67,14 @@ _STR = {
         transcription_failed='No se pudo transcribir la grabación. Revisa el log para más detalles.',
         no_speech='La grabación no contiene voz: no se ha generado transcripción.',
         minutes_failed='No se pudieron generar las minutas. Revisa el log para más detalles.',
+        minutes_pending_session=('Claude no tiene la sesión iniciada. La reunión queda guardada con su título y su '
+                                 'transcript, y las minutas se generarán solas en cuanto ejecutes «claude auth login» '
+                                 'en una terminal.'),
+        minutes_pending_missing=('No se encuentra Claude Code. La reunión queda guardada con su título y su '
+                                 'transcript, y las minutas se generarán solas cuando vuelva a estar instalado.'),
+        minutes_pending=('Claude no ha podido generar las minutas. La reunión queda guardada con su título y su '
+                         'transcript, y Noted lo reintentará solo.'),
+        untitled='Reunión {time}',
         mic_only='Grabando SOLO tu microfono: no se captura el audio de los demas. Si usas auriculares, sus voces no quedaran en la grabacion.',
         mic_unavailable='No se pudo acceder al micrófono. Comprueba que no lo usa otra app.',
         mic_menu_muted='Micrófono: {name} — SILENCIADO (clic para activar)',
@@ -109,6 +117,14 @@ _STR = {
         transcription_failed='Transcription failed. Check the log for details.',
         no_speech='No speech in the recording: no transcript was produced.',
         minutes_failed='Minutes generation failed. Check the log for details.',
+        minutes_pending_session=('Claude is not signed in. The meeting is saved with its title and transcript, and '
+                                 'the minutes will be generated on their own as soon as you run «claude auth login» '
+                                 'in a terminal.'),
+        minutes_pending_missing=('Claude Code was not found. The meeting is saved with its title and transcript, and '
+                                 'the minutes will be generated on their own once it is installed again.'),
+        minutes_pending=('Claude could not generate the minutes. The meeting is saved with its title and '
+                         'transcript, and Noted will retry on its own.'),
+        untitled='Meeting {time}',
         mic_only='Recording your microphone ONLY — system audio is not being captured. If you are on a headset, the others will not be in the recording.',
         mic_unavailable='Could not access the microphone. Check that no other app is using it.',
         mic_menu_muted='Microphone: {name} — MUTED (click to unmute)',
@@ -144,6 +160,12 @@ DEFER_RECHECK_S = 10.0
 # Con el disco al limite, escribir puede fallar y recuperarse cada pocos segundos:
 # como mucho un aviso de cada tipo en este intervalo.
 DISK_TOAST_EVERY_S = 120.0
+# Minutas que fallaron (marca 'pending', ver _retry_pending_minutes): cada cuanto
+# se mira si Claude ya responde, y cuantas veces se reintenta cada reunion por
+# arranque del daemon.
+RETRY_PENDING_FIRST_S = 120.0
+RETRY_PENDING_EVERY_S = 900.0
+RETRY_PENDING_MAX = 3
 
 
 def _make_icon(color: str):
@@ -230,10 +252,13 @@ class TrayApp:
         # peticion de ceder, para no fiarse de un 'yielded' de la anterior.
         self._ctl_lock = threading.RLock()
         self._yield_seq = 0
+        # stem -> reintentos de sus minutas en este arranque (_retry_pending_minutes).
+        self._pending_retries: dict[str, int] = {}
 
         threading.Thread(target=self._pipeline_loop, daemon=True, name='PipelineWorker').start()
         threading.Thread(target=self._mic_poller, daemon=True, name='MicStatusPoller').start()
         threading.Thread(target=self._recover_pending, daemon=True, name='PipelineRecovery').start()
+        threading.Thread(target=self._retry_pending_loop, daemon=True, name='PendingMinutesRetry').start()
         threading.Thread(target=self._notification_poller, daemon=True, name='NotificationPoller').start()
         if (PROJECT_DIR / 'email_brain_updater.py').exists():
             self._start_daily_brain_scan()
@@ -701,6 +726,10 @@ class TrayApp:
                         self._icon.title = self._mic_decorated_title(tooltip)
                 except Exception:
                     pass
+                try:
+                    self._note_teams_title()
+                except Exception as e:
+                    log.warning(f"No se pudo apuntar el título de la reunión: {e}")
             self._write_status()
             self._check_pending_notification()
             if self._recording_start and time.monotonic() >= self._disk_next_check:
@@ -709,6 +738,24 @@ class TrayApp:
                     self._check_disk()
                 except Exception as e:
                     log.warning(f"No se pudo comprobar el disco: {e}")
+
+    def _note_teams_title(self):
+        """Apunta junto a la grabacion en curso (<stem>.title) el nombre de su
+        reunion de Teams cuando el nombre del fichero no lo lleva: "Grabar
+        ahora", o el aviso de Teams aceptado con una grabacion ya en marcha. El
+        28/10/2026 dos reuniones asi se quedaron como "Reunion" al fallar Claude.
+        Vale el primero: un cambio de titulo a mitad suele ser otra ventana."""
+        path = self._recording_path
+        if path is None or self._stem_meeting_name(path.stem):
+            return
+        name = getattr(self._detector, 'current_meeting_name', None)
+        if not isinstance(name, str) or not self._is_meeting_title(name):
+            return
+        sidecar = path.with_suffix('.title')
+        if sidecar.exists():
+            return
+        sidecar.write_text(name.strip(), encoding='utf-8')
+        log.info(f"Título de Teams para {path.name}: {name.strip()}")
 
     def _check_disk(self):
         """Disco libre mientras se graba (ver disk_guard). El 26/10/2026 se lleno
@@ -1217,6 +1264,46 @@ class TrayApp:
     _TRANSIENT_TITLES = ('Unión a la reunión', 'Unirse a la reunión', 'Join meeting', 'Joining meeting',
                          'Barra de control de uso compartido', 'Sharing control bar',
                          'Vista compacta de la reunión', 'Meeting compact view')
+    # Nombres que la app da a una grabacion sin reunion detras: no son titulos.
+    _GENERIC_NAMES = ('manual', 'recording', 'cli', 'reunion', 'reunión', 'meeting')
+
+    def _is_meeting_title(self, name: str) -> bool:
+        key = self._norm_key(name)
+        return bool(key) and key not in {self._norm_key(t) for t in self._GENERIC_NAMES + self._TRANSIENT_TITLES}
+
+    def _stem_meeting_name(self, stem: str) -> str | None:
+        """El nombre de reunion que lleva el fichero (YYYY-MM-DD_HH-MM_<nombre>),
+        sin el sufijo de colision (__2); None si es 'manual' o un titulo pasajero."""
+        m = re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_(.+)', stem)
+        if not m:
+            return None
+        name = re.sub(r'__\d+$', '', m.group(1)).replace('_', ' ').strip()
+        return name if self._is_meeting_title(name) else None
+
+    def _fallback_title(self, parts: list, participants: list, s: dict) -> str:
+        """El titulo de una reunion sin el de Claude, siempre uno que la distinga:
+        el nombre de Teams de cualquiera de sus grabaciones (el del fichero o su
+        .title), el asunto de su cita de Outlook, o la hora."""
+        for p in parts:
+            name = self._stem_meeting_name(p.stem)
+            if name:
+                return name
+        for p in parts:
+            for folder in dict.fromkeys((p.parent, RECORDINGS_DIR, RECORDINGS_DIR / 'processed')):
+                try:
+                    name = (folder / f'{p.stem}.title').read_text(encoding='utf-8').strip()
+                except OSError:
+                    continue
+                if self._is_meeting_title(name):
+                    return name
+        m = re.match(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})', parts[0].stem) if parts else None
+        subject = next((p.get('meeting_subject') for p in participants or [] if p.get('meeting_subject')), None)
+        if not subject and m:
+            from outlook_sender import find_meeting_subject
+            subject = find_meeting_subject(datetime(*map(int, m.groups())))
+        if subject and subject.strip():
+            return subject.strip()
+        return s['untitled'].format(time=f"{m.group(4)}:{m.group(5)}" if m else datetime.now().strftime('%H:%M'))
 
     def has_pending_session(self, meeting_name: str) -> bool:
         with self._session_lock:
@@ -1384,6 +1471,11 @@ class TrayApp:
         if self._is_cancelled(wav_path.stem):
             raise _Cancelled()
 
+        # Un reintento de unas minutas que fallaron (_retry_pending_minutes): las
+        # minimas ya estan en el panel, archivadas y exportadas con su nombre, y
+        # las nuevas van al mismo fichero.
+        pending_md = self._pending_minutes_of(wav_path.stem)
+
         if minutes_mode == 'full':
             self._current_job.update({'step': 2, 'step_label': 'Generando minutas', 'step_started': time.time()})
             self.set_processing('Generando minutas...')
@@ -1393,16 +1485,31 @@ class TrayApp:
             if not raw:
                 # Antes se hacia return: sin .md la reunion no salia en el panel y
                 # se reprocesaba en cada arranque (revision del 20/10/2026). Quedan
-                # unas minimas, con "Generar minutas completas" para reintentar.
-                log.error("Generación de minutas fallida: se guardan minutas mínimas")
-                self._notify('Noted ⚠', s['minutes_failed'])
-                raw = self._brief_minutes(transcript_text, wav_path, 'off', detected_language, s)
+                # unas minimas con su titulo y la marca 'pending', y se rehacen
+                # solas en cuanto Claude responda (_retry_pending_minutes).
+                from minutes_generator import claude_problem
+                reason = claude_problem()
+                log.error(f"Generación de minutas fallida ({reason or 'Claude no respondió'}): "
+                          f"quedan pendientes y se reintentarán solas")
+                if pending_md is None:
+                    self._notify('Noted ⚠', s[{'no_session': 'minutes_pending_session',
+                                               'missing': 'minutes_pending_missing'}.get(reason, 'minutes_pending')])
+                raw = self._brief_minutes(transcript_text, wav_path, 'pending', detected_language, s,
+                                          title=self._fallback_title(parts, participants, s), reason=reason)
                 minutes_mode = 'off'
         else:
-            raw = self._brief_minutes(transcript_text, wav_path, minutes_mode, detected_language, s)
+            raw = self._brief_minutes(transcript_text, wav_path, minutes_mode, detected_language, s,
+                                      title=self._fallback_title(parts, participants, s))
 
         title, content = extract_title_from_minutes(raw)
-        minutes_path = get_minutes_path(wav_path, title)
+        if pending_md is not None:
+            minutes_path = pending_md
+            if minutes_mode == 'full':
+                # El fichero conserva su nombre; el panel muestra esta linea
+                # (como tras renombrar una reunion).
+                content = f"TITULO: {title}\n\n{content}"
+        else:
+            minutes_path = get_minutes_path(wav_path, title)
         existed = minutes_path.exists()
         saved = save_minutes(content, minutes_path)
 
@@ -1540,13 +1647,16 @@ class TrayApp:
         except Exception as e:
             log.warning(f"Glosario: sin sugerencias de {stem}: {e}")
 
-    def _brief_minutes(self, transcript_text: str, wav_path: Path, mode: str, language: str, s: dict) -> str:
-        """Minutas de los niveles 'summary' y 'off'. Nunca fallan: si el resumen
-        no sale, quedan las minimas, y la reunion se guarda y se ve igual."""
+    def _brief_minutes(self, transcript_text: str, wav_path: Path, mode: str, language: str, s: dict,
+                       title: str | None = None, reason: str | None = None) -> str:
+        """Minutas de los niveles 'summary' y 'off', y las 'pending' de unas
+        completas que fallaron. Nunca fallan: si el resumen no sale, quedan las
+        minimas, y la reunion se guarda y se ve igual."""
         from minutes_generator import brief_minutes
-        _nm = re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_(.+)', wav_path.stem)
-        name = _nm.group(1).replace('_', ' ').strip() if _nm else ''
-        title = name if name and name.lower() not in ('manual', 'recording', 'cli') else 'Reunion'
+        title = title or self._fallback_title([wav_path], [], s)
+        if mode == 'pending':
+            return brief_minutes(title, 'pending', None, 'en' if language == 'en' else 'es',
+                                 reason=reason, stem=wav_path.stem)
         summary = None
         if mode == 'summary':
             self._current_job.update({'step': 2, 'step_label': 'Resumiendo', 'step_started': time.time()})
@@ -1574,13 +1684,93 @@ class TrayApp:
                 transcript_path.unlink()
             except Exception as e:
                 log.warning(f"No se pudo eliminar {transcript_path.name}: {e}")
-        for suffix in ('.lang', '.partial', '.context', '.live'):
+        for suffix in ('.lang', '.partial', '.context', '.live', '.title'):
             aux = wav_path.with_suffix(suffix)
             if aux.exists():
                 try:
                     aux.unlink()
                 except Exception:
                     pass
+
+    def _pending_minutes_of(self, stem: str) -> Path | None:
+        """Las minutas 'pending' de esta grabacion, si las hay (ver brief_minutes)."""
+        from minutes_generator import pending_stem_of
+        m = re.match(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})', stem)
+        if not m:
+            return None
+        for md in MINUTES_DIR.glob(f"{''.join(m.group(1, 2, 3))}_{''.join(m.group(4, 5))}_*.md"):
+            try:
+                with md.open(encoding='utf-8') as f:
+                    if pending_stem_of(f.read(600)) == stem:
+                        return md
+            except OSError:
+                continue
+        return None
+
+    def _retry_pending_loop(self):
+        time.sleep(RETRY_PENDING_FIRST_S)
+        while True:
+            try:
+                self._retry_pending_minutes()
+            except Exception as e:
+                log.warning(f"Reintento de minutas pendientes: {e}", exc_info=True)
+            time.sleep(RETRY_PENDING_EVERY_S)
+
+    def _pipeline_idle(self) -> bool:
+        with self._session_lock:
+            sess = self._session
+            open_session = bool(sess and not sess.get('finalized'))
+        return not (self._recording_or_saving() or open_session or self._current_job
+                    or self._processing_msg or self._pipeline_queued
+                    or not self._pipeline_queue.empty())
+
+    def _retry_pending_minutes(self):
+        """Rehace las minutas que fallaron (marca 'pending') cuando Claude vuelve.
+        El 28/10/2026 caduco la sesion de Claude y dos reuniones se quedaron sin
+        minutas, sin acciones y sin coaching. Entran en el pipeline como una
+        reunion recuperada al arrancar, con su transcript ya hecho (sin Whisper).
+        Solo con Noted ocioso y las minutas completas activadas, y como mucho
+        RETRY_PENDING_MAX veces por reunion y arranque: una que falle por otra
+        cosa no gasta Claude cada 15 minutos."""
+        import config as _config
+        from minutes_generator import claude_problem, pending_stem_of
+        from storage import get_transcript_path
+        if _config.minutes_mode() != 'full' or not self._pipeline_idle():
+            return
+        todo = []
+        for md in sorted(MINUTES_DIR.glob('*.md')):
+            try:
+                with md.open(encoding='utf-8') as f:
+                    stem = pending_stem_of(f.read(600))
+            except OSError:
+                continue
+            if stem and self._pending_retries.get(stem, 0) < RETRY_PENDING_MAX:
+                todo.append((md, stem))
+        if not todo:
+            return
+        problem = claude_problem()
+        if problem:
+            log.info(f"{len(todo)} reunión(es) con minutas pendientes: Claude aún no está listo ({problem})")
+            return
+        for md, stem in todo:
+            wav = RECORDINGS_DIR / f'{stem}.wav'
+            self._pending_retries[stem] = self._pending_retries.get(stem, 0) + 1
+            try:
+                text = md.with_name(md.stem + '_transcript.txt').read_text(encoding='utf-8')
+                if not text.strip():
+                    raise OSError('el transcript está vacío')
+                # Donde el pipeline busca un transcript ya hecho. El WAV puede
+                # estar en processed/ o ya borrado: no se vuelve a leer.
+                get_transcript_path(wav).write_text(text, encoding='utf-8')
+            except OSError as e:
+                log.warning(f"Minutas pendientes de {md.name}: no se pueden reintentar ({e})")
+                self._pending_retries[stem] = RETRY_PENDING_MAX
+                continue
+            log.info(f"Minutas pendientes de {md.name}: se reintentan "
+                     f"(intento {self._pending_retries[stem]} de {RETRY_PENDING_MAX})")
+            self._pipeline_queued.append(stem)
+            self._pipeline_queue.put(wav)
+        self._write_status()
 
     def _recover_pending(self):
         time.sleep(3)

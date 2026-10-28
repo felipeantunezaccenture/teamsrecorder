@@ -361,7 +361,7 @@ def _pin_key(stem: str) -> str:
 
 
 def _brief_mode(md: Path) -> str | None:
-    """'summary' u 'off' si las minutas son breves (minutes_generator.brief_minutes)."""
+    """'summary', 'off' o 'pending' si las minutas son breves (minutes_generator.brief_minutes)."""
     try:
         with md.open(encoding='utf-8') as f:
             head = f.read(600)

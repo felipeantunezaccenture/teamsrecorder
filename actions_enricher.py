@@ -208,10 +208,9 @@ def save_without_actions(minutes_path: Path, projects_dir: Path, extra_text: str
 
 
 def _detect_and_save_project(minutes_path: Path, projects_dir: Path, extra_text: str | None = None):
-    """Ask Claude to identify which project this meeting belongs to."""
-    _claude_bin = _get_claude_bin()
-    if not _claude_bin:
-        return
+    """Ask Claude to identify which project this meeting belongs to. Si Claude no
+    responde (sin sesion, sin CLI), el proyecto que nombre el titulo: hasta el
+    28/10/2026 esas reuniones se quedaban sin proyecto."""
     # Load projects
     projects_file = PROJECT_DIR / 'projects.json'
     if not projects_file.exists():
@@ -236,6 +235,11 @@ def _detect_and_save_project(minutes_path: Path, projects_dir: Path, extra_text:
         if line.startswith('TITULO:'):
             meeting_title = line.removeprefix('TITULO:').strip()
             break
+
+    _claude_bin = _get_claude_bin()
+    if not _claude_bin:
+        _save_project_from_title(minutes_path, meeting_title, projects)
+        return
 
     content = raw[:4000]
     if extra_text:
@@ -282,15 +286,40 @@ No explanation, just the id or "none"."""
             detected = result.stdout.strip().lower().strip('"\'')
             valid_ids = {p['id'] for p in projects}
             project_id = detected if detected in valid_ids else 'none'
-            # Save to actions JSON
-            ap = get_actions_path(minutes_path)
-            if ap.exists():
-                adata = json.loads(ap.read_text(encoding='utf-8'))
-                adata['project_id'] = project_id
-                ap.write_text(json.dumps(adata, ensure_ascii=False, indent=2), encoding='utf-8')
+            if _store_project_id(minutes_path, project_id):
                 log.info(f"Project detected: {project_id} for {minutes_path.name}")
+            return
+        log.warning(f"Project detection: claude rc={result.returncode}: "
+                    f"{((result.stderr or '').strip() or (result.stdout or '').strip())[:300]}")
     except Exception as e:
         log.warning(f"Project detection failed: {e}")
+    _save_project_from_title(minutes_path, meeting_title, projects)
+
+
+def _store_project_id(minutes_path: Path, project_id: str) -> bool:
+    ap = get_actions_path(minutes_path)
+    if not ap.exists():
+        return False
+    adata = json.loads(ap.read_text(encoding='utf-8'))
+    adata['project_id'] = project_id
+    ap.write_text(json.dumps(adata, ensure_ascii=False, indent=2), encoding='utf-8')
+    return True
+
+
+def _save_project_from_title(minutes_path: Path, meeting_title: str, projects: list) -> None:
+    """Sin respuesta de Claude: el proyecto que nombre el titulo. Si no nombra
+    ninguno (o empatan dos), sin project_id, para que una deteccion posterior
+    con Claude (detect_projects_for_all_meetings) lo vuelva a intentar."""
+    from project_context import project_from_title
+    try:
+        p = project_from_title(meeting_title, projects)
+        if p and _store_project_id(minutes_path, p['id']):
+            log.info(f"Proyecto por el título (sin Claude): {p['id']} para {minutes_path.name}")
+        elif not p:
+            log.info(f"Sin proyecto para {minutes_path.name}: Claude no respondió y el título "
+                     f"no nombra ninguno")
+    except Exception as e:
+        log.warning(f"Proyecto por el título: {e}")
 
 
 def add_manual_action(minutes_path: Path, title: str,
