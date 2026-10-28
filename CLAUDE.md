@@ -134,6 +134,7 @@ Action blocks embedded in markdown:
 | Web UI layout and filtering | `web/app.js`, `web/app.css` |
 | Storage paths / retention policy | `storage.py` |
 | Glossary (hotwords for Whisper, transcript corrections, minutes prompt, pending suggestions) | `glossary.py`, `glossary.json` (personal, gitignored); UI in Settings → `web/app.js` (`openGlossaryDrawer`), API in `app_window.AppAPI` (`*_glossary_*`); suggestions generated after each meeting by `tray_app._suggest_glossary_terms` |
+| Transcription during the meeting (background/live modes, own process, `<stem>.live.*` files; read its module docstring first) | `live_transcriber.py`; daemon side in `tray_app.py` (`_start_live`, `_write_live_ctl`, `_write_live_hints`, `_use_live_transcript`) |
 
 ## Logging
 
