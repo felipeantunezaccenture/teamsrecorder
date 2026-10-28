@@ -54,7 +54,7 @@ _APP_MODULES = (
     'tray_app', 'app_window', 'tasks_store', 'buckets_store', 'project_context',
     'actions_enricher', 'actions_parser', 'minutes_generator', 'html_exporter',
     'inbox_watcher', 'outlook_sender', 'project_exporter', 'teams_chat',
-    'cli', 'main', 'glossary', 'live_transcriber',
+    'diagnostics', 'cli', 'main', 'glossary', 'live_transcriber',
 )
 IMPORT_ERRORS: dict = {}
 
@@ -87,8 +87,9 @@ _import_app_modules()
 # (nombre del atributo -> modulos que tienen su propia copia)
 _SEAMS = {
     'PROJECT_DIR': ('config', 'actions_enricher', 'actions_ui', 'actions_window',
-                    'app_window', 'audio_recorder', 'buckets_store', 'cli', 'main',
-                    'minutes_generator', 'project_context', 'tasks_store', 'tray_app'),
+                    'app_window', 'audio_recorder', 'buckets_store', 'cli',
+                    'diagnostics', 'main', 'minutes_generator', 'project_context',
+                    'tasks_store', 'tray_app'),
     'MINUTES_DIR': ('config', 'app_window', 'project_context', 'storage', 'tray_app'),
     'RECORDINGS_DIR': ('config', 'app_window', 'inbox_watcher', 'storage', 'tray_app'),
     'INBOX_DIR': ('config', 'inbox_watcher', 'storage'),

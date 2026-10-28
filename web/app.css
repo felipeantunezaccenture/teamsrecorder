@@ -1247,6 +1247,80 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
 }
 .task-drawer-backdrop.open { display: block; }
 
+/* ── Diagnóstico ──────────────────────────────────────────────────────────── */
+/* El veredicto va en un bloque relleno y, además del color, lleva siempre la
+   palabra (OK / AVISO / FALLO): el color solo refuerza, nunca es el único
+   portador del significado. */
+.diag-verdict {
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 15px;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: .3px;
+}
+.diag-verdict.sev0 { background: var(--green);  color: #fff; }
+.diag-verdict.sev1 { background: #f59e0b;       color: #1a1a2e; }
+.diag-verdict.sev2 { background: var(--red);    color: #fff; }
+.diag-verdict.sev3 { background: var(--accent); color: #fff; }
+
+.diag-hint { font-size: 13px; color: var(--text); text-align: center; margin-top: -10px; }
+
+.diag-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.diag-row:last-child { border-bottom: none; }
+
+.diag-badge {
+  flex: 0 0 auto;
+  min-width: 64px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  border-radius: 5px;
+  padding: 3px 7px;
+  color: #fff;
+}
+.diag-badge.sev0 { background: var(--green); }
+.diag-badge.sev1 { background: #f59e0b; color: #1a1a2e; }
+.diag-badge.sev2 { background: var(--red); }
+
+.diag-row-main { flex: 1; min-width: 0; }
+.diag-row-top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.diag-row-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.diag-row-state { font-size: 13px; font-weight: 600; }
+.diag-row-state.sev0 { color: var(--green); }
+.diag-row-state.sev1 { color: #b45309; }
+.diag-row-state.sev2 { color: var(--red); }
+.diag-row-detail { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+
+/* El botón de arreglo vive en la fila del problema que resuelve. */
+.diag-fix-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+}
+.diag-fix-btn:hover:not(:disabled) { background: var(--accent-dark); }
+.diag-fix-btn:disabled { opacity: .6; cursor: default; }
+
+.diag-foot { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.5; }
+
+[data-theme="dark"] .diag-verdict.sev1 { color: #1a1a2e; }
+[data-theme="dark"] .diag-row-state.sev1 { color: #fbbf24; }
+
 .task-detail-drawer {
   position: fixed; right: 0; top: 0; bottom: 0; width: 520px;
   background: var(--bg); border-left: 1px solid var(--border);
