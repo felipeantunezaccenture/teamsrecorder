@@ -230,8 +230,12 @@ def test_clean_env_no_modifica_el_entorno_real(monkeypatch):
 
 # ── config._find_claude_bin ──────────────────────────────────────────────
 
-def test_sin_claude_en_el_path_devuelve_none(monkeypatch):
+def test_sin_claude_en_el_path_devuelve_none(monkeypatch, tmp_path):
     monkeypatch.setattr(config.shutil, 'which', lambda _n: None)
+    # Tambien se mira en las rutas habituales de instalacion (npm, AnthropicClaude):
+    # en un PC con claude instalado el test encontraba el real y fallaba.
+    monkeypatch.setenv('APPDATA', str(tmp_path))
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
     assert config._find_claude_bin() is None
 
 
