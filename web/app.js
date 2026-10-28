@@ -176,7 +176,8 @@ const T = {
     diag_restart_btn: 'Reiniciar Noted',
     diag_restart_working: 'Reiniciando Noted… la ventana se cerrará y volverá sola.',
     diag_restart_blocked: 'Hay una grabación en curso: no se reinicia.',
-    diag_restart_busy: 'Noted está procesando una reunión (o tiene alguna en cola): no se reinicia hasta que termine.',
+    diag_restart_busy: 'Noted está procesando una reunión (o tiene alguna en cola): no se ha reiniciado. Vuelve a intentarlo cuando termine.',
+    diag_restart_unknown: 'No se ha podido comprobar si Noted está trabajando, así que no se ha reiniciado.',
     diag_restart_nowd: 'No se pudo arrancar el vigilante, así que no se ha reiniciado (Noted no volvería).',
     diag_test_btn: 'Probar ahora',
     diag_test_again: 'Probar otra vez',
@@ -594,7 +595,8 @@ const T = {
     diag_restart_btn: 'Restart Noted',
     diag_restart_working: 'Restarting Noted… the window will close and come back on its own.',
     diag_restart_blocked: 'A recording is in progress: not restarting.',
-    diag_restart_busy: 'Noted is processing a meeting (or has one queued): not restarting until it finishes.',
+    diag_restart_busy: 'Noted is processing a meeting (or has one queued): it was not restarted. Try again when it finishes.',
+    diag_restart_unknown: 'Could not check whether Noted is working, so it was not restarted.',
     diag_restart_nowd: 'Could not start the watchdog, so nothing was restarted (Noted would not come back).',
     diag_test_btn: 'Test now',
     diag_test_again: 'Test again',
@@ -1011,7 +1013,8 @@ const T = {
     diag_restart_btn: 'Reiniciar Noted',
     diag_restart_working: 'Reiniciant Noted… la finestra es tancarà i tornarà sola.',
     diag_restart_blocked: 'Hi ha una gravació en curs: no es reinicia.',
-    diag_restart_busy: 'Noted està processant una reunió (o en té alguna a la cua): no es reinicia fins que acabi.',
+    diag_restart_busy: 'Noted està processant una reunió (o en té alguna a la cua): no s\'ha reiniciat. Torna-ho a provar quan acabi.',
+    diag_restart_unknown: 'No s\'ha pogut comprovar si Noted està treballant, així que no s\'ha reiniciat.',
     diag_restart_nowd: 'No s\'ha pogut arrencar el vigilant, així que no s\'ha reiniciat (Noted no tornaria).',
     diag_test_btn: 'Provar ara',
     diag_test_again: 'Tornar a provar',
@@ -4188,6 +4191,7 @@ async function restartNoted() {
   if (!r || !r.ok) {
     const key = (r && r.reason === 'recording') ? 'diag_restart_blocked'
               : (r && r.reason === 'busy') ? 'diag_restart_busy'
+              : (r && r.reason === 'unknown') ? 'diag_restart_unknown'
               : (r && r.reason === 'no_watchdog') ? 'diag_restart_nowd'
               : 'diag_error';
     showToast(t(key));

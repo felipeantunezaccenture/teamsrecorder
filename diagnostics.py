@@ -246,7 +246,13 @@ def apply_fix(action: str) -> dict:
 
 
 def _ps_quote(value) -> str:
-    return "'" + str(value).replace("'", "''") + "'"
+    """Literal de PowerShell entre comillas simples. PowerShell tambien toma
+    como comilla simple las tipograficas (U+2018 a U+201B): una ruta como
+    ...\\O\u2019Brien\\... cerraba la cadena. Se duplican todas."""
+    s = str(value)
+    for q in ("'", "\u2018", "\u2019", "\u201a", "\u201b"):
+        s = s.replace(q, q + q)
+    return "'" + s + "'"
 
 
 def _tr_env(script: str, timeout: float) -> subprocess.CompletedProcess:
@@ -291,9 +297,13 @@ def _start_watchdog() -> dict:
     try:
         _tr_env(f"Start-TRDaemon -Root {_ps_quote(PROJECT_DIR)} -TimeoutSeconds 2 | Out-Null",
                 timeout=120)
-        return {'ok': True}
     except Exception as e:
         return {'ok': False, 'error': str(e)}
+    # Lo que cuenta es que este, no que se pidiera: PowerShell puede fallar sin
+    # que el comando lance (una politica de ejecucion, un tr_env.ps1 roto).
+    if not _watchdog_running():
+        return {'ok': False, 'error': 'el vigilante no arranco'}
+    return {'ok': True}
 
 
 def _watchdog_running() -> bool:
@@ -318,7 +328,9 @@ def restart_app() -> dict:
     # cola. El 13/10/2026 un reinicio 39 s despues de las minutas perdio el
     # coaching y las acciones de una reunion. La puerta es la compartida.
     jobs = _active_jobs()
-    if jobs is None or jobs > 0:
+    if jobs is None:
+        return {'ok': False, 'reason': 'unknown'}
+    if jobs > 0:
         return {'ok': False, 'reason': 'busy'}
 
     if not _watchdog_running():
@@ -339,7 +351,14 @@ def restart_app() -> dict:
 
 def _kill_daemon() -> None:
     """Mata el grabador. Los hijos primero: si muere el padre antes, deja
-    huerfanos con el .lock tomado y el vigilante no puede volver a arrancar."""
+    huerfanos con el .lock tomado y el vigilante no puede volver a arrancar.
+
+    La puerta se vuelve a mirar aqui: entre la de restart_app y este momento
+    pueden pasar mas de 30 s (arrancar el vigilante), y una reunion que
+    empezara en ese rato moriria."""
+    if _is_recording() or _active_jobs() != 0:
+        log.warning("diagnostico: el reinicio se cancela, Noted ha empezado a trabajar")
+        return
     procs = _procs(str(PROJECT_DIR / 'main.py'), ('python',))
     if not procs:
         return

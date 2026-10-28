@@ -241,8 +241,8 @@ class AudioRecorder:
         # El retraso que eso introduce se compensa con silencio al abrir su
         # fichero (ver _open_loop_writer), asi que no desalinea las voces.
         self.loopback_active = False
-        threading.Thread(target=self._start_loopback_async, daemon=True,
-                         name='LoopbackInit').start()
+        threading.Thread(target=self._start_loopback_async, args=(self._writer_abort,),
+                         daemon=True, name='LoopbackInit').start()
 
         _write_sentinel()
         log.info(f"Recording started → {output_path}")
@@ -452,7 +452,7 @@ class AudioRecorder:
             threading.Thread(target=callback, args=() if arg is None else (arg,),
                              daemon=True, name=name).start()
 
-    def _start_loopback_async(self):
+    def _start_loopback_async(self, abort: threading.Event | None = None):
         """Abre el loopback con reintentos, fuera del hilo de start().
 
         Al entrar en una llamada, Teams y Windows reconfiguran los endpoints y
@@ -464,8 +464,11 @@ class AudioRecorder:
         _begin, y start() ya no espera a que se guarde la reunión anterior. Con
         "mientras se grabe", un reintento de la reunión A dormido 10 s se
         despertaba con la B ya grabando y le abría un segundo worker encima.
+        abort llega de _begin al crear el hilo: leído aquí dentro, un hilo que
+        tardara en arrancar podría ver ya el de la reunión siguiente.
         """
-        abort = self._writer_abort
+        if abort is None:
+            abort = self._writer_abort
 
         def mine() -> bool:
             return self._recording and self._writer_abort is abort
@@ -476,11 +479,15 @@ class AudioRecorder:
         while mine():
             attempt += 1
             self._loopback_error = None
-            if self._start_wasapi_loopback(mine) or self._start_stereo_mix_loopback(mine):
+            if self._start_wasapi_loopback(mine) or (mine() and self._start_stereo_mix_loopback(mine)):
                 self.loopback_active = True
                 if warned:
                     log.info(f"Audio del sistema recuperado en el intento {attempt}; "
                              f"el tramo anterior solo tiene el micrófono")
+                return
+            if not mine():
+                # Su grabación terminó durante el intento: ni avisos de "solo
+                # micrófono" que el usuario vería en la reunión siguiente.
                 return
             reason = self._loopback_error or 'sin dispositivo loopback disponible'
             if attempt < _LOOPBACK_ATTEMPTS:
@@ -720,9 +727,6 @@ class AudioRecorder:
             for i, dev in enumerate(devices):
                 name = dev['name'].lower()
                 if dev['max_input_channels'] > 0 and any(k in name for k in keywords):
-                    self._loop_sr = SAMPLE_RATE
-                    self._loop_ch = 1
-
                     def cb(indata, frames, time_info, status):
                         q = self._loop_q
                         if q is not None:
@@ -735,19 +739,23 @@ class AudioRecorder:
                     # grabacion ya termino, el reintento escribia un .part nuevo
                     # despues de que la limpieza hubiera corrido: 824 KB de ceros
                     # el 22/09/2026.
-                    self._stereo_stream = sd.InputStream(
+                    stream = sd.InputStream(
                         device=i, samplerate=SAMPLE_RATE, channels=1,
                         dtype='float32', blocksize=int(SAMPLE_RATE * 0.1), callback=cb,
                     )
-                    # Bajo el lock de start()/stop(), como en el WASAPI: si la
-                    # grabación ya no es la que lo pidió, no se abre nada.
+                    # Bajo el lock de start()/stop(), como en el WASAPI, y en una
+                    # variable local hasta saberlo: si la grabación ya no es la
+                    # que lo pidió, no se toca nada suyo (ni el stream, ni su
+                    # sample rate, ni su fichero).
                     with self._start_lock:
                         if not (still() if still else self._recording):
-                            self._stereo_stream.close()
-                            self._stereo_stream = None
+                            stream.close()
                             return False
+                        self._loop_sr = SAMPLE_RATE
+                        self._loop_ch = 1
+                        self._stereo_stream = stream
                         self._open_loop_writer()
-                        self._stereo_stream.start()
+                        stream.start()
                     log.info(f"Stereo Mix loopback: {dev['name']}")
                     return True
         except Exception as e:

@@ -305,8 +305,9 @@ def test_restart_app_se_niega_si_hay_grabacion_en_curso(monkeypatch, sin_timers)
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('trabajos', [1, None], ids=['procesando', 'no_se_sabe'])
-def test_restart_app_se_niega_si_noted_esta_trabajando(monkeypatch, sin_timers, trabajos):
+@pytest.mark.parametrize('trabajos, motivo', [(1, 'busy'), (None, 'unknown')],
+                         ids=['procesando', 'no_se_sabe'])
+def test_restart_app_se_niega_si_noted_esta_trabajando(monkeypatch, sin_timers, trabajos, motivo):
     """Grabar no es lo unico que un reinicio corta. El 13/10/2026 uno a mitad
     del procesado perdio el coaching y las acciones de una reunion. Si no se
     puede saber, tampoco se reinicia."""
@@ -314,7 +315,7 @@ def test_restart_app_se_niega_si_noted_esta_trabajando(monkeypatch, sin_timers, 
     monkeypatch.setattr(diagnostics, '_active_jobs', lambda: trabajos)
     monkeypatch.setattr(diagnostics, '_watchdog_running', lambda: True)
 
-    assert diagnostics.restart_app() == {'ok': False, 'reason': 'busy'}
+    assert diagnostics.restart_app() == {'ok': False, 'reason': motivo}
     assert sin_timers.creados == []
 
 
@@ -504,6 +505,7 @@ def test_start_watchdog_pasa_por_start_trdaemon(monkeypatch, tr_dirs):
     (tr_dirs / 'watchdog.ps1').write_text('# de mentira', encoding='utf-8')
     vistos = []
     monkeypatch.setattr(diagnostics, '_tr_env', lambda script, timeout: vistos.append(script))
+    monkeypatch.setattr(diagnostics, '_watchdog_running', lambda: True)
     monkeypatch.setattr(diagnostics.subprocess, 'Popen',
                         lambda *a, **k: pytest.fail('el vigilante no se lanza con un Popen propio'))
 
@@ -821,3 +823,40 @@ def test_la_api_reenvia_el_motivo_del_rechazo(monkeypatch):
                         lambda: {'ok': False, 'reason': 'no_watchdog'})
 
     assert app_window.AppAPI().restart_app()['reason'] == 'no_watchdog'
+
+
+@pytest.mark.unit
+def test_start_watchdog_dice_si_el_vigilante_no_arranco(monkeypatch, tr_dirs):
+    """PowerShell puede fallar sin que el comando lance: lo que cuenta es que
+    el vigilante este, no que se pidiera."""
+    (tr_dirs / 'watchdog.ps1').write_text('# de mentira', encoding='utf-8')
+    monkeypatch.setattr(diagnostics, '_tr_env', lambda script, timeout: None)
+    monkeypatch.setattr(diagnostics, '_watchdog_running', lambda: False)
+    res = diagnostics._start_watchdog()
+    assert res['ok'] is False and 'vigilante' in res['error']
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('grabando, trabajos', [(True, 0), (False, 1), (False, None)],
+                         ids=['grabando', 'procesando', 'no_se_sabe'])
+def test_kill_daemon_vuelve_a_mirar_la_puerta(monkeypatch, grabando, trabajos):
+    """Entre la puerta de restart_app y la muerte pueden pasar mas de 30 s
+    (arrancar el vigilante): una reunion que empezara en ese rato moriria."""
+    proc = FakeProc(10, cmdline=['pythonw', 'main.py'])
+    monkeypatch.setattr(diagnostics, '_procs', lambda *_a: [proc])
+    monkeypatch.setattr(diagnostics, '_is_recording', lambda: grabando)
+    monkeypatch.setattr(diagnostics, '_active_jobs', lambda: trabajos)
+    diagnostics._kill_daemon()
+    assert proc.killed is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('ruta, esperado', [
+    ("C:\\Users\\ana\\Noted", "'C:\\Users\\ana\\Noted'"),
+    ("C:\\Users\\O'Brien", "'C:\\Users\\O''Brien'"),
+    ("C:\\Users\\O\u2019Brien", "'C:\\Users\\O\u2019\u2019Brien'"),
+])
+def test_ps_quote_duplica_todas_las_comillas_simples(ruta, esperado):
+    """PowerShell toma como comilla simple tambien las tipograficas: sin
+    duplicarlas, una ruta con una cerraba la cadena y la puerta no respondia."""
+    assert diagnostics._ps_quote(ruta) == esperado
