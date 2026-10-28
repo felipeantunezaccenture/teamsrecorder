@@ -138,3 +138,81 @@ def test_un_sandbox_suyo_se_rehace_y_queda_marcado(tmp_path, monkeypatch):
     (sandbox / 'resto.txt').write_text('de la vez anterior')
     assert qs.prepare_sandbox(sandbox) is None
     assert not (sandbox / 'resto.txt').exists() and (sandbox / qs.SANDBOX_MARK).exists()
+
+def test_un_sandbox_que_es_un_fichero_no_vale(tmp_path, monkeypatch):
+    monkeypatch.setattr(qs, 'ROOT', tmp_path / 'repo')
+    (tmp_path / 'sb').write_text('soy un fichero')
+    assert 'no es una carpeta' in qs.prepare_sandbox(tmp_path / 'sb')
+
+
+@pytest.fixture
+def web(tmp_path, monkeypatch):
+    w = tmp_path / 'web'
+    w.mkdir()
+    (w / 'index.html').write_text('<html><script src="app.js"></script></html>', encoding='utf-8')
+    (w / 'app.css').write_text('body{}', encoding='utf-8')
+    (tmp_path / 'secreto.txt').write_text('fuera de web/', encoding='utf-8')
+    monkeypatch.setattr(qs, 'WEB', w)
+    return w
+
+
+def _get(path, host='127.0.0.1:8799'):
+    handler_cls = qs.make_handler(object(), TOKEN, HOSTS)
+    h = handler_cls.__new__(handler_cls)
+    h.path, h.headers, h.wfile = path, {'Host': host}, io.BytesIO()
+    sent = {}
+    h.send_response = lambda code: sent.__setitem__('code', code)
+    h.send_header = lambda k, v: sent.__setitem__(k, v)
+    h.end_headers = lambda: None
+    h.do_GET()
+    return sent['code'], sent.get('Content-Type'), h.wfile.getvalue()
+
+
+def test_el_panel_se_sirve_con_el_puente_delante(web):
+    code, ctype, body = _get('/?x=1')
+    assert code == 200 and ctype.startswith('text/html')
+    assert body.decode().index('/qa_bridge.js') < body.decode().index('app.js')
+    code, ctype, body = _get('/qa_bridge.js')
+    assert code == 200 and TOKEN.encode() in body
+
+
+def test_los_ficheros_de_web_si_y_los_de_fuera_no(web):
+    assert _get('/app.css')[:2] == (200, 'text/css')
+    assert _get('/../secreto.txt')[0] == 404, "salirse de web/ no sirve nada"
+    assert _get('/no_existe.js')[0] == 404
+
+
+def test_un_host_ajeno_no_ve_ni_el_panel(web):
+    """DNS rebinding: tampoco el GET, que serviria el token en qa_bridge.js."""
+    assert _get('/qa_bridge.js', host='atacante.example:8799')[0] == 403
+
+
+def test_la_siembra_deja_reuniones_y_una_grabacion_en_vivo_inventadas(tmp_path, monkeypatch):
+    muestra = tmp_path / 'muestra.txt'
+    muestra.write_text('[00:05] [Felipe]: Empezamos.\n[00:51] [Otros]: El taller es el jueves.\n',
+                       encoding='utf-8')
+    monkeypatch.setattr(qs, 'SAMPLE', muestra)
+    sb = tmp_path / 'sb'
+    qs.seed(sb)
+    assert sorted(p.name for p in (sb / 'minutes').glob('*.md')) == [
+        '20261019_1000_Taller_Atlas.md', '20261019_1100_Seguimiento_Atlas.md']
+    vivo = (sb / 'recordings' / '2026-10-19_12-00_Entrevista_QA.live.jsonl').read_text(encoding='utf-8')
+    assert [json.loads(r)['track'] for r in vivo.splitlines()] == ['mic', 'loop']
+    assert json.loads((sb / '.pipeline_status.json').read_text())['jobs'][0]['stage'] == 'recording'
+
+
+def test_no_arranca_donde_corre_noted(monkeypatch, capsys):
+    monkeypatch.setattr(qs.sys, 'argv', ['panel_qa_server.py'])
+    monkeypatch.setattr(qs, 'noted_running_here', lambda: True)
+    assert qs.main() == 2 and 'corre Noted' in capsys.readouterr().err
+
+
+def test_no_arranca_con_un_sandbox_que_no_es_suyo(tmp_path, monkeypatch, capsys):
+    ajena = tmp_path / 'mis_cosas'
+    ajena.mkdir()
+    (ajena / 'importante.txt').write_text('no borrar')
+    monkeypatch.setattr(qs, 'ROOT', tmp_path / 'repo')
+    monkeypatch.setattr(qs.sys, 'argv', ['panel_qa_server.py', '--sandbox', str(ajena)])
+    monkeypatch.setattr(qs, 'noted_running_here', lambda: False)
+    assert qs.main() == 2 and 'no es un sandbox' in capsys.readouterr().err
+    assert (ajena / 'importante.txt').exists()
