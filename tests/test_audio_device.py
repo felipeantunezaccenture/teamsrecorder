@@ -33,12 +33,12 @@ def sin_loopback():
             self.wasapi_calls = 0
             self.stereo_calls = 0
 
-        def _start_wasapi_loopback(self):
+        def _start_wasapi_loopback(self, *_a):
             self.wasapi_calls += 1
             self._loopback_error = 'simulado: no hay dispositivo loopback'
             return False
 
-        def _start_stereo_mix_loopback(self):
+        def _start_stereo_mix_loopback(self, *_a):
             self.stereo_calls += 1
             return False
 
@@ -201,7 +201,7 @@ def test_el_reintento_del_loopback_no_deja_part_huerfano(tr_dirs):
             super().__init__()
             self.attempts = 0
 
-        def _start_wasapi_loopback(self):
+        def _start_wasapi_loopback(self, *_a):
             self.attempts += 1
             if self.attempts == 1:
                 self._loopback_error = 'simulado: worker muerto'
@@ -210,7 +210,7 @@ def test_el_reintento_del_loopback_no_deja_part_huerfano(tr_dirs):
             self._open_loop_writer()
             return True
 
-        def _start_stereo_mix_loopback(self):
+        def _start_stereo_mix_loopback(self, *_a):
             # Abre el fichero ANTES de saber si el InputStream funciona.
             self._loop_sr, self._loop_ch = ar.SAMPLE_RATE, 1
             self._open_loop_writer()

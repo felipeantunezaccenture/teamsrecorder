@@ -459,14 +459,24 @@ class AudioRecorder:
         WASAPI rechaza la apertura durante unos segundos; sin reintento ese
         fallo momentáneo condenaba la reunión entera a grabarse sin las voces
         de los demás.
+
+        Atado a la grabación que lo lanzó: _writer_abort es nuevo en cada
+        _begin, y start() ya no espera a que se guarde la reunión anterior. Con
+        "mientras se grabe", un reintento de la reunión A dormido 10 s se
+        despertaba con la B ya grabando y le abría un segundo worker encima.
         """
+        abort = self._writer_abort
+
+        def mine() -> bool:
+            return self._recording and self._writer_abort is abort
+
         reason = 'no se intentó'
         attempt = 0
         warned = False
-        while self._recording:
+        while mine():
             attempt += 1
             self._loopback_error = None
-            if self._start_wasapi_loopback() or self._start_stereo_mix_loopback():
+            if self._start_wasapi_loopback(mine) or self._start_stereo_mix_loopback(mine):
                 self.loopback_active = True
                 if warned:
                     log.info(f"Audio del sistema recuperado en el intento {attempt}; "
@@ -478,7 +488,7 @@ class AudioRecorder:
                     f"Loopback no disponible (intento {attempt}/{_LOOPBACK_ATTEMPTS}): "
                     f"{reason} — reintentando en {_LOOPBACK_RETRY_WAIT}s"
                 )
-                time.sleep(_LOOPBACK_RETRY_WAIT)
+                abort.wait(_LOOPBACK_RETRY_WAIT)       # un cancel() lo despierta ya
                 continue
             if not warned:
                 warned = True
@@ -495,9 +505,11 @@ class AudioRecorder:
                     ).start()
             else:
                 log.warning(f"Loopback sigue sin arrancar (intento {attempt}): {reason}")
-            time.sleep(_LOOPBACK_LATE_WAIT)
+            abort.wait(_LOOPBACK_LATE_WAIT)
 
-    def _start_wasapi_loopback(self) -> bool:
+    def _start_wasapi_loopback(self, still=None) -> bool:
+        """still(): si la grabación que lo pidió sigue siendo la de ahora (ver
+        _start_loopback_async). Sin él, basta con que se esté grabando."""
         try:
             # stderr capturado, no descartado: el worker explica ahí por qué no
             # pudo abrir el loopback y antes ese motivo se perdía, dejando el
@@ -526,15 +538,25 @@ class AudioRecorder:
                 return False
             sr = struct.unpack('<I', header[:4])[0]
             n_ch = struct.unpack('<I', header[4:8])[0]
-            self._loop_sr = sr
-            self._loop_ch = n_ch
-            self._loopback_proc = proc
-            self._open_loop_writer()
-            t = threading.Thread(
-                target=self._wasapi_reader, args=(proc, sr, n_ch),
-                daemon=True, name='WasapiLoopbackReader',
-            )
-            t.start()
+            # La cabecera puede tardar hasta _LOOPBACK_HEADER_TIMEOUT: para
+            # entonces la grabación pudo parar, o empezar otra. Se comprueba bajo
+            # el lock de start()/stop(), que es con el que cambian, y antes de
+            # abrir nada sobre sus ficheros.
+            with self._start_lock:
+                vigente = still() if still else self._recording
+                if vigente:
+                    self._loop_sr = sr
+                    self._loop_ch = n_ch
+                    self._loopback_proc = proc
+                    self._open_loop_writer()
+                    threading.Thread(
+                        target=self._wasapi_reader, args=(proc, sr, n_ch),
+                        daemon=True, name='WasapiLoopbackReader',
+                    ).start()
+            if not vigente:
+                self._drain_worker_error(proc)
+                log.info("WASAPI loopback abierto tarde: su grabación ya no es la de ahora; se cierra")
+                return False
             log.info(f"WASAPI loopback started ({sr}Hz, {n_ch}ch)")
             return True
         except Exception as e:
@@ -691,7 +713,7 @@ class AudioRecorder:
         self._loop_phase = next_pos - keep_from
         return out
 
-    def _start_stereo_mix_loopback(self) -> bool:
+    def _start_stereo_mix_loopback(self, still=None) -> bool:
         keywords = ('stereo mix', 'mezcla estereo', 'what u hear', 'wave out mix', 'loopback')
         try:
             devices = sd.query_devices()
@@ -717,12 +739,15 @@ class AudioRecorder:
                         device=i, samplerate=SAMPLE_RATE, channels=1,
                         dtype='float32', blocksize=int(SAMPLE_RATE * 0.1), callback=cb,
                     )
-                    if not self._recording:
-                        self._stereo_stream.close()
-                        self._stereo_stream = None
-                        return False
-                    self._open_loop_writer()
-                    self._stereo_stream.start()
+                    # Bajo el lock de start()/stop(), como en el WASAPI: si la
+                    # grabación ya no es la que lo pidió, no se abre nada.
+                    with self._start_lock:
+                        if not (still() if still else self._recording):
+                            self._stereo_stream.close()
+                            self._stereo_stream = None
+                            return False
+                        self._open_loop_writer()
+                        self._stereo_stream.start()
                     log.info(f"Stereo Mix loopback: {dev['name']}")
                     return True
         except Exception as e:

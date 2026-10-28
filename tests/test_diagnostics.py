@@ -30,6 +30,15 @@ import pytest
 
 import diagnostics
 
+REAL_ACTIVE_JOBS = diagnostics._active_jobs
+
+
+@pytest.fixture(autouse=True)
+def puerta_libre(monkeypatch):
+    """La puerta de reinicio (Get-TRActiveJobs) es un PowerShell de verdad: aqui
+    esta libre. Los tests que la prueban la sustituyen por la suya."""
+    monkeypatch.setattr(diagnostics, '_active_jobs', lambda: 0)
+
 
 class FakeProc:
     """Proceso de mentira con la forma que usa diagnostics: .pid, .info,
@@ -296,6 +305,44 @@ def test_restart_app_se_niega_si_hay_grabacion_en_curso(monkeypatch, sin_timers)
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize('trabajos', [1, None], ids=['procesando', 'no_se_sabe'])
+def test_restart_app_se_niega_si_noted_esta_trabajando(monkeypatch, sin_timers, trabajos):
+    """Grabar no es lo unico que un reinicio corta. El 13/10/2026 uno a mitad
+    del procesado perdio el coaching y las acciones de una reunion. Si no se
+    puede saber, tampoco se reinicia."""
+    monkeypatch.setattr(diagnostics, '_is_recording', lambda: False)
+    monkeypatch.setattr(diagnostics, '_active_jobs', lambda: trabajos)
+    monkeypatch.setattr(diagnostics, '_watchdog_running', lambda: True)
+
+    assert diagnostics.restart_app() == {'ok': False, 'reason': 'busy'}
+    assert sin_timers.creados == []
+
+
+@pytest.mark.unit
+def test_los_trabajos_los_cuenta_la_puerta_compartida(monkeypatch):
+    """Una sola puerta para todas las rutas de reinicio (tr_env.ps1): con dos
+    copias, el 19/10/2026 se arreglo una y la otra siguio cortando procesados."""
+    vistos = []
+
+    def tr_env(script, timeout):
+        vistos.append(script)
+        return types.SimpleNamespace(stdout='2\r\n')
+
+    monkeypatch.setattr(diagnostics, '_tr_env', tr_env)
+    assert REAL_ACTIVE_JOBS() == 2
+    assert 'Get-TRActiveJobs' in vistos[0]
+
+
+@pytest.mark.unit
+def test_si_la_puerta_no_responde_no_se_sabe(monkeypatch):
+    def revienta(*_a, **_k):
+        raise OSError('powershell bloqueado')
+
+    monkeypatch.setattr(diagnostics, '_tr_env', revienta)
+    assert REAL_ACTIVE_JOBS() is None
+
+
+@pytest.mark.unit
 def test_restart_app_responde_antes_de_matar(monkeypatch, sin_timers):
     """La muerte va agendada, no inmediata: si no, el proceso moriria a mitad
     de la llamada y la UI mostraria un error en un reinicio que salio bien."""
@@ -451,21 +498,33 @@ def test_quitar_el_mute_avisa_si_no_hay_dispositivo(monkeypatch):
 # ── Arranque del vigilante ────────────────────────────────────────────────────
 
 @pytest.mark.unit
-def test_start_watchdog_lanza_el_script_oculto(monkeypatch, tr_dirs):
-    """Sin -WindowStyle Hidden le aparece al usuario una consola negra en
-    mitad de la pantalla cada vez que pulsa el boton."""
+def test_start_watchdog_pasa_por_start_trdaemon(monkeypatch, tr_dirs):
+    """Con un Popen propio, el vigilante seria hijo de este panel y moriria con
+    el. Start-TRDaemon se lo pide al Explorador (tr_env.ps1, 28/10/2026)."""
     (tr_dirs / 'watchdog.ps1').write_text('# de mentira', encoding='utf-8')
-    llamadas = []
+    vistos = []
+    monkeypatch.setattr(diagnostics, '_tr_env', lambda script, timeout: vistos.append(script))
     monkeypatch.setattr(diagnostics.subprocess, 'Popen',
-                        lambda cmd, **kw: llamadas.append((cmd, kw)))
+                        lambda *a, **k: pytest.fail('el vigilante no se lanza con un Popen propio'))
 
     assert diagnostics._start_watchdog() == {'ok': True}
+    assert 'Start-TRDaemon' in vistos[0] and str(tr_dirs) in vistos[0]
+
+
+@pytest.mark.unit
+def test_tr_env_corre_oculto_y_con_tr_env_cargado(monkeypatch, tr_dirs):
+    """Sin ventana oculta le aparece al usuario una consola negra en mitad de
+    la pantalla cada vez que pulsa el boton."""
+    llamadas = []
+    monkeypatch.setattr(diagnostics.subprocess, 'run',
+                        lambda cmd, **kw: llamadas.append((cmd, kw)) or types.SimpleNamespace(stdout=''))
+
+    diagnostics._tr_env('Get-TRActiveJobs', timeout=5)
 
     cmd, kw = llamadas[0]
-    assert cmd[0] == 'powershell'
-    assert 'Hidden' in cmd
-    assert str(tr_dirs / 'watchdog.ps1') in cmd
-    assert kw['cwd'] == str(tr_dirs)
+    assert cmd[0] == 'powershell' and 'Hidden' in cmd
+    assert str(tr_dirs / 'tr_env.ps1') in cmd[-1] and cmd[-1].endswith('Get-TRActiveJobs')
+    assert kw['cwd'] == str(tr_dirs) and kw['timeout'] == 5
 
 
 @pytest.mark.unit
@@ -483,7 +542,7 @@ def test_start_watchdog_captura_el_fallo_al_lanzar(monkeypatch, tr_dirs):
     def revienta(*_a, **_k):
         raise OSError('politica de ejecucion')
 
-    monkeypatch.setattr(diagnostics.subprocess, 'Popen', revienta)
+    monkeypatch.setattr(diagnostics, '_tr_env', revienta)
 
     res = diagnostics._start_watchdog()
     assert res['ok'] is False
