@@ -73,7 +73,11 @@ if (-not $dir) {
     exit 1
 }
 
-Log "Watchdog iniciado (PID $PID) desde dir=$dir"
+# El padre dice por donde arranco: wscript es el Explorador o el inicio de
+# sesion; un powershell es Start-TRDaemon lanzandolo como hijo de quien reinicia.
+$padre = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction SilentlyContinue
+$padreNombre = if ($padre) { (Get-Process -Id $padre.ParentProcessId -ErrorAction SilentlyContinue).ProcessName }
+Log "Watchdog iniciado (PID $PID, padre $($padre.ParentProcessId) $padreNombre) desde dir=$dir"
 
 try {
     . (Join-Path $dir "tr_env.ps1")
@@ -90,8 +94,16 @@ Save-TRRoot $dir
 $pyEnv = Get-TRPython -Root $dir
 if (-not $pyEnv) { Log "ERROR: no se encontro python"; exit 1 }
 
-# Salir si ya hay otro watchdog corriendo para esta instalacion
-$existing = @(Get-TRWatchdogProcess -Root $dir | Where-Object { $_.ProcessId -ne $PID })
+# Salir si ya hay otro watchdog corriendo para esta instalacion. Se queda el
+# mas antiguo: si dos arrancan casi a la vez, cada uno ve al otro, y con "sal
+# si hay otro" salian los dos. Pasa si Start-TRDaemon lanza el suyo justo
+# cuando llega tarde el que le pidio al Explorador.
+$todos = @(Get-TRWatchdogProcess -Root $dir)
+$yo = $todos | Where-Object { $_.ProcessId -eq $PID } | Select-Object -First 1
+$existing = @($todos | Where-Object {
+    $_.ProcessId -ne $PID -and (-not $yo -or $_.CreationDate -lt $yo.CreationDate -or
+        ($_.CreationDate -eq $yo.CreationDate -and $_.ProcessId -lt $PID))
+})
 if ($existing.Count -gt 0) {
     Log "Otro watchdog ya corre (PIDs: $($existing.ProcessId -join ', ')). Saliendo."
     exit 0
