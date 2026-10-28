@@ -75,7 +75,7 @@ echo [3/5] Comprobando Claude CLI...
 where claude >nul 2>&1
 if errorlevel 1 (
     echo   Claude CLI no encontrado. Instalando...
-    npm install -g @anthropic-ai/claude-code
+    call npm install -g @anthropic-ai/claude-code
     if errorlevel 1 (
         echo.
         echo   No se pudo instalar Claude CLI.

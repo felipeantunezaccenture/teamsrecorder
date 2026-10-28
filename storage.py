@@ -65,19 +65,30 @@ def _has_minutes(audio: Path) -> bool:
     return any(MINUTES_DIR.glob(f'{"".join(m.group(1, 2, 3))}_{"".join(m.group(4, 5))}_*.md'))
 
 
+# Lo que aun no se ha procesado se guarda mas tiempo, pero no para siempre:
+# una grabacion sin voz o con la transcripcion rota tambien se queda sin
+# minutas, y _recover_pending la reencolaria (Whisper, o la API de OpenAI si
+# hay OPENAI_API_KEY) en cada arranque.
+PENDING_RETENTION_FACTOR = 3
+
+
 def cleanup_old_recordings(days: int = 10):
     cutoff = datetime.now() - timedelta(days=days)
+    pending_cutoff = datetime.now() - timedelta(days=days * PENDING_RETENTION_FACTOR)
     audio_patterns = ('*.wav', '*.mp3')
     aux_patterns   = ('*.lang', '*.partial', '*.context', '*.live')
     for d in (RECORDINGS_DIR, RECORDINGS_DIR / 'processed'):
         for pattern in audio_patterns + aux_patterns:
             for f in d.glob(pattern):
-                if datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
-                    # Un audio sin minutas en recordings/ es una reunion sin
+                mtime = datetime.fromtimestamp(f.stat().st_mtime)
+                if mtime < cutoff:
+                    # Lo que esta en recordings/ sin minutas es una reunion sin
                     # procesar (fallo, o el portatil estuvo apagado): se reencola
-                    # al arrancar, justo despues de esta limpieza. Borrarlo por
-                    # antiguo seria perder la reunion. Los de processed/ ya la tienen.
-                    if d == RECORDINGS_DIR and pattern in audio_patterns and not _has_minutes(f):
+                    # al arrancar, justo despues de esta limpieza. Borrar su audio
+                    # por antiguo seria perder la reunion, y su .context (lo que
+                    # escribio el usuario) o su .partial, rehacerla peor. Hasta el
+                    # tope de PENDING_RETENTION_FACTOR. Lo de processed/ ya la tiene.
+                    if d == RECORDINGS_DIR and mtime >= pending_cutoff and not _has_minutes(f):
                         continue
                     try:
                         f.unlink()

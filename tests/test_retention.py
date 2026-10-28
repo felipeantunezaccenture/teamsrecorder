@@ -1,10 +1,13 @@
-"""La retencion de audio no puede borrar una reunion que todavia no se proceso.
+"""La retencion de audio no borra una reunion que todavia no se proceso, pero
+tampoco la guarda para siempre.
 
 cleanup_old_recordings corre al arrancar (main.py), justo antes de que
 _recover_pending reencole los WAV de recordings/ que no tienen minutas. Con la
 retencion en 10 dias (8b8822e), una reunion que fallo o que se grabo con el
 portatil a punto de apagarse y no se abrio en 10 dias se borraba sin haberse
-transcrito.
+transcrito. Y al reves: sin tope, una grabacion sin voz o con la transcripcion
+rota se reencolaria en cada arranque para siempre. Lo pendiente se guarda hasta
+PENDING_RETENTION_FACTOR veces la retencion (30 dias con la de 10).
 """
 import os
 import time
@@ -16,28 +19,43 @@ import storage
 pytestmark = pytest.mark.unit
 
 STEM = '2026-10-01_10-00_Comite'
-VIEJO = time.time() - 30 * 86400
+HACE_20 = time.time() - 20 * 86400       # pasada la retencion (10), dentro del tope (30)
+HACE_40 = time.time() - 40 * 86400       # pasado el tope
 
 
-def envejecer(path):
+def envejecer(path, cuando=HACE_20):
     path.write_bytes(b'RIFF')
-    os.utime(path, (VIEJO, VIEJO))
+    os.utime(path, (cuando, cuando))
     return path
 
 
-def test_un_audio_viejo_sin_minutas_no_se_borra(tr_dirs):
-    wav = envejecer(storage.RECORDINGS_DIR / f'{STEM}.wav')
-    pistas = [envejecer(storage.RECORDINGS_DIR / f'{STEM}.{t}.wav') for t in ('mic', 'loop')]
-    storage.cleanup_old_recordings()
-    assert wav.exists() and all(p.exists() for p in pistas)
-
-
-def test_un_audio_viejo_con_minutas_si_se_borra(tr_dirs):
-    wav = envejecer(storage.RECORDINGS_DIR / f'{STEM}.wav')
+def con_minutas():
     storage.MINUTES_DIR.mkdir(parents=True, exist_ok=True)
     (storage.MINUTES_DIR / '20261001_1000_Comite.md').write_text('# Comite', encoding='utf-8')
+
+
+def test_una_reunion_pendiente_no_se_borra(tr_dirs):
+    """El audio, sus pistas, el contexto que escribio el usuario y el .partial
+    de una transcripcion a medias: sin ellos se perderia o se rehacia peor."""
+    restos = [envejecer(storage.RECORDINGS_DIR / f'{STEM}{s}')
+              for s in ('.wav', '.mic.wav', '.loop.wav', '.context', '.partial')]
     storage.cleanup_old_recordings()
-    assert not wav.exists()
+    assert all(p.exists() for p in restos)
+
+
+def test_pasado_el_tope_una_reunion_pendiente_se_borra(tr_dirs):
+    """Una grabacion sin voz o rota tambien se queda sin minutas: sin tope se
+    reencolaria en cada arranque."""
+    restos = [envejecer(storage.RECORDINGS_DIR / f'{STEM}{s}', HACE_40) for s in ('.wav', '.context')]
+    storage.cleanup_old_recordings()
+    assert not any(p.exists() for p in restos)
+
+
+def test_con_minutas_se_borra_a_los_10_dias(tr_dirs):
+    restos = [envejecer(storage.RECORDINGS_DIR / f'{STEM}{s}') for s in ('.wav', '.lang')]
+    con_minutas()
+    storage.cleanup_old_recordings()
+    assert not any(p.exists() for p in restos)
 
 
 def test_lo_procesado_se_borra_por_antiguo(tr_dirs):
@@ -48,16 +66,9 @@ def test_lo_procesado_se_borra_por_antiguo(tr_dirs):
     assert not wav.exists()
 
 
-def test_los_auxiliares_viejos_se_borran_aunque_no_haya_minutas(tr_dirs):
-    aux = envejecer(storage.RECORDINGS_DIR / f'{STEM}.lang')
-    storage.cleanup_old_recordings()
-    assert not aux.exists()
-
-
 def test_lo_reciente_no_se_toca(tr_dirs):
     wav = storage.RECORDINGS_DIR / f'{STEM}.wav'
     wav.write_bytes(b'RIFF')
-    storage.MINUTES_DIR.mkdir(parents=True, exist_ok=True)
-    (storage.MINUTES_DIR / '20261001_1000_Comite.md').write_text('# Comite', encoding='utf-8')
+    con_minutas()
     storage.cleanup_old_recordings()
     assert wav.exists()

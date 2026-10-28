@@ -214,9 +214,11 @@ def grabaciones_viejas(tr_dirs, wav_factory):
     return {'viejos': viejos, 'reciente': reciente, 'minuta': minuta}
 
 
-def test_cleanup_borra_los_auxiliares_viejos(grabaciones_viejas):
-    storage.cleanup_old_recordings(days=15)
-    assert not any(p.exists() for p in grabaciones_viejas['viejos'] if p.suffix != '.wav')
+def test_cleanup_borra_lo_pendiente_pasado_el_tope(grabaciones_viejas):
+    """Sin minutas se guarda PENDING_RETENTION_FACTOR veces la retencion (aqui
+    15 dias con days=5); los ficheros del fixture tienen 20."""
+    storage.cleanup_old_recordings(days=5)
+    assert not any(p.exists() for p in grabaciones_viejas['viejos'])
 
 
 def test_cleanup_no_toca_lo_reciente(grabaciones_viejas):
