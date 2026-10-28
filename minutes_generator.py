@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 import unicodedata
 from pathlib import Path
 
@@ -676,12 +677,30 @@ def extract_title_from_minutes(raw_text: str) -> tuple[str, str]:
 
 
 def save_minutes(minutes: str, output_path: Path) -> bool:
+    """Escritura atomica: al lado y renombrada encima. write_text trunca antes de
+    escribir, y con el disco lleno una minuta que ya existia quedaba a medias,
+    no se borraba (no la habia creado este intento) y _recover_pending la daba
+    por hecha. El renombrado se reintenta si Windows tiene el destino abierto
+    (antivirus, indexador, el panel leyendola)."""
+    tmp = output_path.with_name(output_path.name + '.tmp')
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(minutes, encoding='utf-8')
+        tmp.write_text(minutes, encoding='utf-8')
+        for intento in range(10):
+            try:
+                os.replace(tmp, output_path)
+                break
+            except PermissionError:
+                if intento == 9:
+                    raise
+                time.sleep(0.05)
         log.info(f"Minutas guardadas: {output_path}")
         return True
     except Exception as e:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         log.error(f"Error guardando minutas: {e}")
         return False
 
