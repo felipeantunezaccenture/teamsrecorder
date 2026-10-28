@@ -301,7 +301,7 @@ def test_si_el_glosario_revienta_se_transcribe_igual(monkeypatch, tr_dirs):
 
 
 def test_el_texto_de_la_transcripcion_en_vivo_tambien_se_corrige(monkeypatch, tr_dirs):
-    monkeypatch.setattr(tr, '_finish_live', lambda p, c=None: ('[00:01] de Kinexis', 'es'))
+    monkeypatch.setattr(tr, '_finish_live', lambda p, c=None, prog=None: ('[00:01] de Kinexis', 'es'))
     monkeypatch.setattr(tr, '_transcribe_local',
                         lambda *a, **k: pytest.fail('no debe transcribir el WAV entero'))
     monkeypatch.setattr(tr, '_glossary_context', lambda p: {

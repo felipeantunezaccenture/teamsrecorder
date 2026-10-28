@@ -61,6 +61,9 @@ class LiveTranscript:
         self.done: dict[str, float] = {t: 0.0 for t in _TRACKS}
         self.lang: str | None = None
         self.failed = False
+        # Progreso de la pasada final: (callback, {pista: segundos totales}).
+        self._on_progress = None
+        self._totals: dict[str, float] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         # Serializa la lectura de los .part con su borrado al terminar la
@@ -166,6 +169,7 @@ class LiveTranscript:
         peak = float(np.abs(audio).max())
         if peak < _MIN_PEAK[track]:
             self.done[track] = window_end
+            self._report()
             return capped
 
         gain = min(_TARGET_PEAK / peak, _MAX_GAIN)
@@ -192,6 +196,7 @@ class LiveTranscript:
         if next_done > self.done[track]:
             self.done[track] = next_done
         self._save()
+        self._report()
         return capped and next_done >= window_end - 1e-6
 
     def _transcribe(self, audio, offset, should_cancel):
@@ -219,13 +224,29 @@ class LiveTranscript:
 
     # ── resultado ────────────────────────────────────────────────────────────
 
-    def finish(self, mic_path, loop_path, should_cancel=None) -> tuple[str, str] | None:
+    def _report(self):
+        """Avisa del % de la pasada final (lo ya transcrito sobre el audio total)."""
+        total = sum(self._totals.values())
+        if not self._on_progress or total <= 0:
+            return
+        done = sum(min(self.done[t], self._totals.get(t, 0.0)) for t in _TRACKS)
+        try:
+            self._on_progress(min(int(done / total * 100), 99))
+        except Exception:
+            pass
+
+    def finish(self, mic_path, loop_path, should_cancel=None,
+               on_progress=None) -> tuple[str, str] | None:
         """Espera al hilo, transcribe la cola con las pistas finales y devuelve
         (texto, idioma). None si no se puede garantizar que esté completo."""
         self.stop()
         self.join()
         if self.failed or not Path(mic_path).exists():
             return None
+        self._on_progress = on_progress
+        self._totals = {t: _frames(p) / SAMPLE_RATE
+                        for t, p in (('mic', mic_path), ('loop', loop_path))}
+        self._report()      # se ve ya el % de partida (lo hecho durante la grabacion)
         for track, path in (('mic', mic_path), ('loop', loop_path)):
             if path and Path(path).exists():
                 dur = _frames(path) / SAMPLE_RATE
@@ -323,7 +344,8 @@ def discard_for(wav_path: Path):
     state_path_for(wav_path).unlink(missing_ok=True)
 
 
-def finish_for(wav_path: Path, should_cancel=None) -> tuple[str, str] | None:
+def finish_for(wav_path: Path, should_cancel=None,
+               on_progress=None) -> tuple[str, str] | None:
     """Resultado completo de la transcripción en vivo de esta grabación, o None
     si no hay (o no es fiable) y toca transcribir el WAV entero."""
     wav_path = Path(wav_path)
@@ -342,7 +364,7 @@ def finish_for(wav_path: Path, should_cancel=None) -> tuple[str, str] | None:
     try:
         res = live.finish(wav_path.with_suffix('.mic.wav'),
                           wav_path.with_suffix('.loop.wav'),
-                          should_cancel=should_cancel)
+                          should_cancel=should_cancel, on_progress=on_progress)
     except tr.TranscriptionCancelled:
         raise
     except Exception as e:

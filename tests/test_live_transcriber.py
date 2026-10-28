@@ -194,6 +194,21 @@ def test_finish_devuelve_texto_e_idioma(modelo, tr_dirs):
     assert len(text.splitlines()) == 13
 
 
+def test_finish_informa_del_progreso_desde_lo_ya_hecho_hasta_el_final(modelo, tr_dirs):
+    """Con casi todo transcrito en vivo, el % no puede quedarse en blanco ni
+    empezar de cero: arranca donde lo dejo la grabacion y sube hasta 99."""
+    mic = _wav(tr_dirs / 'm.wav', 130)
+    live = lt.LiveTranscript(tr_dirs / 'a.live')
+    live.advance(mic, None, final=False)
+    vistos = []
+
+    live.finish(mic, None, on_progress=vistos.append)
+
+    assert vistos, "no se informo ningun porcentaje"
+    assert vistos[0] > 80, "debe arrancar en lo ya hecho, no en 0"
+    assert vistos == sorted(vistos) and vistos[-1] <= 99
+
+
 def test_finish_sin_pista_final_pide_transcribir_entero(modelo, tr_dirs):
     live = lt.LiveTranscript(tr_dirs / 'a.live')
     assert live.finish(tr_dirs / 'no_existe.wav', None) is None

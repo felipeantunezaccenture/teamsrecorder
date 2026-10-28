@@ -423,11 +423,13 @@ def _correct_with_glossary(text: str, ctx: dict) -> str:
         return text
 
 
-def _finish_live(audio_path: Path, should_cancel=None) -> tuple[str, str] | None:
+def _finish_live(audio_path: Path, should_cancel=None,
+                 on_progress=None) -> tuple[str, str] | None:
     """Transcripción hecha durante la grabación, o None para transcribir todo."""
     try:
         import live_transcriber
-        return live_transcriber.finish_for(audio_path, should_cancel=should_cancel)
+        return live_transcriber.finish_for(audio_path, should_cancel=should_cancel,
+                                           on_progress=on_progress)
     except TranscriptionCancelled:
         raise
     except Exception as e:
@@ -476,7 +478,7 @@ def transcribe(
             # Si se transcribió en vivo durante la grabación, solo queda la
             # cola. Va ANTES de tomar _infer_lock: finish_for espera al hilo en
             # vivo, que necesita ese lock para acabar su última ventana.
-            live = _finish_live(audio_path, should_cancel)
+            live = _finish_live(audio_path, should_cancel, on_progress)
             glossary_ctx = _glossary_context(audio_path)
             if live is not None:
                 text, lang = live
