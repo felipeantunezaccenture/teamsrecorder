@@ -700,6 +700,20 @@ def test_aprobar_una_sugerencia_desde_la_interfaz(api):
     assert [(e['term'], e['project']) for e in got['entries']] == [('Nurettin', 'sandoz')]
 
 
+def test_editar_una_sugerencia_y_aprobarla_desde_la_interfaz(api):
+    """El formulario de edicion cambia termino, errores y significado, y al
+    guardar se aprueba la sugerencia ya corregida (sin dejar la original)."""
+    gl.add_suggestions([S()], 'm1')
+    got = api.resolve_glossary_suggestion('Nurettin', 'approve', {
+        'term': 'Nurettin K.', 'category': 'person', 'aliases': ['Norethin', 'Nuretin'],
+        'meaning': 'Sponsor', 'project': None})
+    assert got['pending'] == 0
+    [e] = got['entries']
+    assert (e['term'], e['category'], e['aliases'], e['meaning']) == (
+        'Nurettin K.', 'person', ['Norethin', 'Nuretin'], 'Sponsor')
+    assert gl.load()['suggestions'] == []
+
+
 def test_descartar_una_sugerencia_desde_la_interfaz(api):
     gl.add_suggestions([S()], 'm1')
     got = api.resolve_glossary_suggestion('Nurettin', 'dismiss')

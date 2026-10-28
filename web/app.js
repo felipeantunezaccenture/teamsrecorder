@@ -6099,6 +6099,7 @@ const GLOSSARY_CATEGORIES = ['acronym', 'company', 'person', 'term', 'english'];
 let _glossary = { entries: [], suggestions: [], pending: 0, projects: [] };
 let _glScope = '';        // '' = global; si no, id del proyecto
 let _glEditing = null;    // {term, project} de la entrada que se edita; null = nueva
+let _glEditingSugg = null; // término original de la sugerencia que se edita antes de aprobar
 let _glVisible = [];      // entradas que se ven ahora (se actúa sobre ellas por índice)
 
 async function refreshGlossary() {
@@ -6164,6 +6165,7 @@ function _renderGlossaryDrawer() {
   document.getElementById('gl-suggestions-block').classList.toggle('hidden', !sugg.length);
   document.getElementById('gl-suggestions').innerHTML = sugg.map((s, i) => _glRow(s, i,
     `<button class="btn btn-primary btn-sm" data-gl="approve" data-i="${i}">${escHtml(t('glossary_approve'))}</button>
+     <button class="btn btn-ghost btn-sm" data-gl="edit-sugg" data-i="${i}">${escHtml(t('btn_edit'))}</button>
      <button class="btn btn-ghost btn-sm" data-gl="dismiss" data-i="${i}">${escHtml(t('glossary_dismiss'))}</button>`,
     'gl-sugg')).join('');
 
@@ -6192,6 +6194,7 @@ function _onGlossaryClick(ev) {
   const i = Number(btn.dataset.i);
   if (btn.dataset.gl === 'edit') editGlossaryEntry(i);
   else if (btn.dataset.gl === 'del') deleteGlossaryEntry(i);
+  else if (btn.dataset.gl === 'edit-sugg') editGlossarySuggestion(i);
   else resolveGlossarySuggestion(i, btn.dataset.gl);          // approve | dismiss
 }
 
@@ -6226,6 +6229,7 @@ function _glOpenForm(e) {
 
 function startGlossaryEntry() {
   _glEditing = null;
+  _glEditingSugg = null;
   _glOpenForm({});
 }
 
@@ -6233,11 +6237,23 @@ function editGlossaryEntry(i) {
   const e = _glVisible[i];
   if (!e) return;
   _glEditing = { term: e.term, project: e.project || null };
+  _glEditingSugg = null;
   _glOpenForm(e);
+}
+
+// Edita una sugerencia en el mismo formulario; al guardar se aprueba ya con
+// los cambios (no hace falta aprobarla y luego editarla).
+function editGlossarySuggestion(i) {
+  const s = (_glossary.suggestions || [])[i];
+  if (!s) return;
+  _glEditing = null;
+  _glEditingSugg = s.term;
+  _glOpenForm(s);
 }
 
 function cancelGlossaryEntry() {
   _glEditing = null;
+  _glEditingSugg = null;
   document.getElementById('gl-form')?.classList.add('hidden');
 }
 
@@ -6252,6 +6268,15 @@ async function saveGlossaryEntry() {
     project: _glScope || null,
   };
   try {
+    if (_glEditingSugg !== null) {
+      const { term: newTerm, category, aliases, meaning, project } = entry;
+      const res = await pywebview.api.resolve_glossary_suggestion(
+        _glEditingSugg, 'approve', { term: newTerm, category, aliases, meaning, project });
+      cancelGlossaryEntry();
+      _setGlossary(res);
+      showToast(t('glossary_saved'));
+      return;
+    }
     const res = await pywebview.api.save_glossary_entry(entry, _glEditing);
     if (res?.error) { showToast(t('glossary_term_required')); return; }
     cancelGlossaryEntry();
