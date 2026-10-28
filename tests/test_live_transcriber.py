@@ -803,8 +803,11 @@ def test_recover_pending_ignora_las_pistas(tray, wav_factory, monkeypatch):
 
 @pytest.mark.parametrize('name', [f'{STEM}.mic.part', f'{STEM}.live.jsonl', f'{STEM}.live.json',
                                   f'{STEM}.live.json.tmp', f'{STEM}.live.finishing'])
-def test_la_limpieza_de_15_dias_recoge_los_restos(tr_dirs, name):
+def test_la_limpieza_recoge_los_restos_de_una_reunion_procesada(tr_dirs, name):
+    """Con minutas: lo de una reunion sin procesar se guarda mas tiempo, para
+    rehacerla, y eso no son restos."""
     import os
+    (storage.MINUTES_DIR / '20261018_1000_Entrevista_Cliente.md').write_text('# minutas')
     f = ta.RECORDINGS_DIR / name
     f.write_text('x')
     viejo = time.time() - 20 * 86400
