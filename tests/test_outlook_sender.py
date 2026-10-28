@@ -10,7 +10,7 @@ proposito, asi que cualquier test que lo llamara fallaria a gritos.
 
 Cero COM: se sustituye outlook_sender._get_outlook, el unico seam del repo.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 import pytest
 
@@ -192,9 +192,8 @@ def test_REGRESION_las_fechas_de_outlook_llevan_zona_horaria(fake_outlook):
     """pywin32 devuelve Start con tzinfo (+00:00). Restarla de una fecha sin zona
     lanzaba TypeError, un `except: continue` lo tragaba, y NINGUNA reunión
     encontró jamás a sus invitados (60 de 60 en noted.log)."""
-    from datetime import timezone
     fake_outlook.appointments = [
-        CitaFalsa('Comite Semanal', AHORA.replace(tzinfo=timezone.utc),
+        CitaFalsa('Comite Semanal', AHORA.replace(tzinfo=UTC),
                   [('Ines', 'ines@x.com')]),
     ]
 
