@@ -1215,3 +1215,83 @@ def test_el_hilo_de_lanzamiento_usa_el_spawn_de_cuando_se_pidio(tray, wav, monke
     monkeypatch.setattr(lt, 'spawn', lambda *_a, **_k: llamados.append('B'))
     hilos[0]()
     assert llamados == ['A']
+
+
+# -- Utilidades del proceso aparte -------------------------------------------
+
+def test_la_memoria_libre_se_lee_de_windows():
+    """GlobalMemoryStatusEx: de ahi salen la RAM libre y la reserva de memoria
+    (commit) que miran _memory_ok y _memory_floor_ok antes de cargar Whisper."""
+    import os
+    st = lt._mem_status()
+    if os.name != 'nt':
+        assert st is None
+        return
+    ram, reserva = st
+    assert ram > 0 and reserva > 0
+
+
+@pytest.mark.parametrize('reserva, esperado', [(lt.COMMIT_FLOOR_MB - 1, False), (lt.COMMIT_FLOOR_MB, True)])
+def test_el_suelo_de_memoria(monkeypatch, reserva, esperado):
+    monkeypatch.setattr(lt, '_mem_status', lambda: (8000.0, float(reserva)))
+    assert lt._memory_floor_ok() is esperado
+
+
+def test_sin_poder_leer_la_memoria_no_se_frena(monkeypatch):
+    """Si Windows no contesta, se sigue: frenar sin datos dejaria la reunion sin
+    transcribir hasta el cierre por una lectura que fallo."""
+    monkeypatch.setattr(lt, '_mem_status', lambda: None)
+    assert lt._memory_floor_ok() is True
+
+
+def test_la_prioridad_se_pide_a_windows(monkeypatch):
+    import os
+
+    import psutil
+    pedidas = []
+
+    class Proceso:
+        def nice(self, cls):
+            pedidas.append(cls)
+
+    monkeypatch.setattr(psutil, 'Process', Proceso)
+    lt._set_priority('idle')
+    if os.name == 'nt':
+        assert pedidas == [psutil.IDLE_PRIORITY_CLASS]
+    else:
+        assert pedidas == []
+
+
+def test_una_prioridad_que_falla_no_tumba_el_proceso(monkeypatch):
+    import psutil
+
+    def revienta():
+        raise psutil.AccessDenied()
+
+    monkeypatch.setattr(psutil, 'Process', revienta)
+    lt._set_priority('below')           # no debe lanzar
+
+
+def test_el_daemon_vivo_se_reconoce_por_pid_y_hora_de_arranque():
+    """Pid y hora juntos: un pid reciclado por otro proceso no cuenta como vivo."""
+    import os
+
+    import psutil
+    yo = psutil.Process(os.getpid())
+    assert lt._daemon_alive(yo.pid, yo.create_time()) is True
+    assert lt._daemon_alive(yo.pid, yo.create_time() - 60) is False
+    assert lt._daemon_alive(2 ** 31 - 1, 0.0) is False
+
+
+def test_el_proceso_aparte_escribe_su_propio_log(tr_dirs):
+    import logging
+    raiz = logging.getLogger()
+    antes = list(raiz.handlers)
+    try:
+        lt._setup_logging()
+        nuevos = [h for h in raiz.handlers if h not in antes]
+        assert len(nuevos) == 1 and nuevos[0].baseFilename.endswith('live.log')
+    finally:
+        for h in [h for h in raiz.handlers if h not in antes]:
+            raiz.removeHandler(h)
+            h.close()
