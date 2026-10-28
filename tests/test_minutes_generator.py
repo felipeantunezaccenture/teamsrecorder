@@ -92,6 +92,41 @@ def test_guardar_en_una_ruta_imposible_devuelve_false_y_no_lanza(tr_dirs, monkey
     assert mg.save_minutes('x', tr_dirs / 'minutes' / 'x.md') is False
 
 
+def test_si_el_disco_se_llena_la_minuta_anterior_queda_entera(tr_dirs, monkeypatch):
+    """write_text trunca antes de escribir: con el disco lleno, una minuta que
+    ya existia quedaba a medias, y _recover_pending la daba por hecha."""
+    destino = tr_dirs / 'minutes' / 'x.md'
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text('la minuta entera', encoding='utf-8')
+    real = type(destino).write_text
+
+    def a_medias(self, data, *a, **k):
+        real(self, data[:3], *a, **k)
+        raise OSError(28, 'No space left on device')
+
+    monkeypatch.setattr(type(destino), 'write_text', a_medias)
+    assert mg.save_minutes('la minuta nueva', destino) is False
+    monkeypatch.undo()
+    assert destino.read_text(encoding='utf-8') == 'la minuta entera'
+    assert not list(destino.parent.glob('*.tmp')), "quedo el temporal"
+
+
+def test_un_bloqueo_momentaneo_al_renombrar_se_reintenta(tr_dirs, monkeypatch):
+    destino = tr_dirs / 'minutes' / 'x.md'
+    real, intentos = mg.os.replace, []
+
+    def replace(src, dst):
+        intentos.append(1)
+        if len(intentos) < 3:
+            raise PermissionError(5, 'Access is denied')
+        return real(src, dst)
+
+    monkeypatch.setattr(mg.os, 'replace', replace)
+    monkeypatch.setattr(mg.time, 'sleep', lambda _s: None)
+    assert mg.save_minutes('hola', destino) is True
+    assert destino.read_text(encoding='utf-8') == 'hola' and len(intentos) == 3
+
+
 # ── El prompt que se le manda al modelo ──────────────────────────────────
 
 @pytest.mark.parametrize('idioma', ['es', 'en', 'auto'])
