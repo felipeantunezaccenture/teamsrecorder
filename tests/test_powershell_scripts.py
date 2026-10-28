@@ -22,6 +22,7 @@ reportaba 34 lineas mas abajo, donde el parser se rendia.
 
 El arreglo es el BOM. Estos tests lo vigilan.
 """
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -109,3 +110,93 @@ def test_un_ps1_parsea_de_verdad(script):
                        capture_output=True, text=True, timeout=120)
 
     assert r.returncode == 0, f"{script.name} no parsea:\n{r.stdout}{r.stderr}"
+
+
+# ── La resolucion del directorio del watchdog ────────────────────────────
+#
+# INCIDENTE (23/09/2026). watchdog.ps1 moria en cada arranque sin dejar rastro:
+# ni proceso, ni una sola linea WATCHDOG en el log. La app se quedaba sin red
+# de seguridad y nadie se enteraba. Venia roto desde 38b133b (21/09), el mismo
+# commit titulado "watchdog robusto".
+#
+# La causa es una trampa de PowerShell. El script elegia su directorio asi:
+#
+#     foreach ($candidate in @(
+#         $PSScriptRoot,
+#         (Split-Path -Parent $PSCommandPath),
+#         (Split-Path -Parent $MyInvocation.MyCommand.Path),
+#         (Split-Path -Parent $MyInvocation.ScriptName)   # <-- vacio con -File
+#     )) { ... }
+#
+# `Split-Path -Parent ''` es un error de BINDING DE PARAMETRO, y eso termina la
+# sentencia entera: el array nunca se construye y el foreach no itera — ni
+# siquiera sobre $PSScriptRoot, que era correcto. $dir se quedaba en null, y
+# como $logf se deriva de $dir, el fallo no se podia ni registrar.
+#
+# $MyInvocation.ScriptName esta vacio precisamente cuando se invoca con -File,
+# que es como lo lanzan start_watchdog.vbs y la tarea programada. O sea:
+# fallaba siempre en produccion y solo funcionaba si otro script lo llamaba.
+
+WATCHDOG = REPO / 'watchdog.ps1'
+
+
+@pytest.mark.unit
+def test_el_watchdog_no_evalua_split_path_dentro_de_un_literal():
+    """LA COMPROBACION BARATA, sin PowerShell: ningun Split-Path puede vivir
+    dentro de un literal @(...). Si su argumento viene vacio, el error de
+    binding se lleva por delante la construccion del array entero."""
+    texto = WATCHDOG.read_text(encoding='utf-8-sig')
+    for literal in re.findall(r'in\s+@\((.*?)\)\s*\)\s*\{', texto, re.DOTALL):
+        assert 'Split-Path' not in literal, (
+            "Split-Path dentro de un literal @(...): con un argumento vacio "
+            "aborta la sentencia y $dir se queda en null"
+        )
+
+
+@pytest.mark.unit
+def test_el_watchdog_filtra_cada_fuente_antes_de_usarla():
+    """No basta con que falte lo malo: tiene que estar lo bueno. Cada fuente
+    se comprueba ANTES de pasarla a Split-Path."""
+    texto = WATCHDOG.read_text(encoding='utf-8-sig')
+    assert re.search(r'IsNullOrWhiteSpace\((\$\w+)\)\)\s*\{[^}]*Split-Path -Parent \1', texto), (
+        "no se ve el filtro previo de cada fuente; sin el, el bug vuelve"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _PWSH, reason='no hay PowerShell en esta maquina')
+def test_el_watchdog_resuelve_su_directorio_invocado_con_File(tmp_path):
+    """LA COMPROBACION DE VERDAD, y reproduce el incidente exacto: se invoca
+    con -File —como lo lanzan start_watchdog.vbs y la tarea programada, y el
+    unico modo en que $MyInvocation.ScriptName viene vacio— y se mira si $dir
+    sale con valor.
+
+    Se monta una carpeta que imita la raiz del repo (el script junto a un
+    tr_env.ps1) y se corta el script justo antes de su bucle infinito.
+    Con el codigo de 38b133b esto no llega ni a escribir el fichero.
+    """
+    (tmp_path / 'tr_env.ps1').write_text('# marcador', encoding='utf-8')
+
+    texto = WATCHDOG.read_text(encoding='utf-8-sig')
+    corte = texto.find('$mainpy = Join-Path $dir')
+    assert corte > 0, "no se encontro donde cortar el script"
+
+    salida = tmp_path / 'dir.txt'
+    sonda = tmp_path / 'sonda.ps1'
+    sonda.write_text(
+        texto[:corte]
+        + '\n"$dir" | Out-File -LiteralPath "' + str(salida) + '" -Encoding utf8\n',
+        encoding='utf-8-sig')
+
+    r = subprocess.run(
+        [_PWSH, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(sonda)],
+        capture_output=True, text=True, timeout=120)
+
+    assert 'ParameterArgumentValidationError' not in (r.stdout + r.stderr), (
+        "sigue abortando la construccion del array:\n" + r.stdout + r.stderr)
+    assert salida.exists(), f"la sonda no llego al final:\n{r.stdout}{r.stderr}"
+
+    resuelto = salida.read_text(encoding='utf-8-sig').strip()
+    assert resuelto == str(tmp_path), (
+        f"$dir no resolvio a la carpeta del script.\n"
+        f"  esperado: {tmp_path}\n  obtenido: '{resuelto}'")
