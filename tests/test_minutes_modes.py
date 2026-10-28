@@ -183,6 +183,28 @@ def test_acciones_apagadas_con_minutas_completas(tray, cierre, tr_dirs, wav_fact
     assert cierre['sin_acciones'] == [None], "las completas bastan para reconocer el proyecto"
 
 
+@pytest.mark.parametrize('modo, sugiere', [('full', True), ('summary', False), ('off', False)])
+def test_las_sugerencias_del_glosario_solo_con_minutas_completas(tray, cierre, tr_dirs, wav_factory,
+                                                                 monkeypatch, modo, sugiere):
+    """Pedir sugerencias al glosario manda el transcript a Claude: con las minutas
+    breves o apagadas, quien usa Noted eligio no mandarle la reunion entera."""
+    import app_window
+    ajustes(tr_dirs, minutes_mode=modo)
+    pedidas = []
+    monkeypatch.setattr(ta.TrayApp, '_suggest_glossary_terms', lambda self, *a: pedidas.append(a))
+    monkeypatch.setattr(ae, 'enrich_and_save', lambda md, d, on_done=None, **_k: on_done and on_done())
+    monkeypatch.setattr(ae, 'save_without_actions',
+                        lambda md, d, extra_text=None, on_done=None: on_done and on_done())
+    monkeypatch.setattr(app_window, 'open_app', lambda *a, **k: None)
+
+    cerrar(tray, wav_factory)
+
+    t0 = time.monotonic()
+    while not pedidas and time.monotonic() - t0 < (2 if sugiere else 0.3):
+        time.sleep(0.02)
+    assert bool(pedidas) is sugiere
+
+
 def test_un_ajuste_raro_vale_como_completas(tr_dirs):
     ajustes(tr_dirs, minutes_mode='turbo', actions_enabled='no')
     assert config.minutes_mode() == 'full'
@@ -268,7 +290,7 @@ def test_la_deteccion_del_proyecto_ve_el_transcript_si_se_le_da(tr_dirs, monkeyp
         cmds.append(cmd)
         return type('R', (), {'returncode': 0, 'stdout': 'atlas', 'stderr': ''})()
 
-    monkeypatch.setattr(ae, '_CLAUDE_BIN', 'claude')
+    monkeypatch.setattr(ae, '_get_claude_bin', lambda: 'claude')
     monkeypatch.setattr(ae.subprocess, 'run', run)
     ae._detect_and_save_project(md, tr_dirs, extra_text='Hablamos del cliente Atlas')
     assert 'Hablamos del cliente Atlas' in prompts[0]

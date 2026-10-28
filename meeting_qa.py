@@ -129,7 +129,7 @@ def command(model: str, system_prompt: str = SYSTEM_PROMPT) -> list[str]:
     """Sin herramientas ni MCP ni CLAUDE.md (--safe-mode mantiene el login;
     --bare exigiria API key), y en stream para ver la respuesta mientras se
     escribe. Flags comprobados en el CLI 2.1.287."""
-    return [config.CLAUDE_BIN, '-p', '--safe-mode', '--model', model, '--effort', EFFORT,
+    return [config.get_claude_bin(), '-p', '--safe-mode', '--model', model, '--effort', EFFORT,
             '--system-prompt', system_prompt, '--tools', '', '--strict-mcp-config',
             '--no-session-persistence', '--output-format', 'stream-json', '--verbose',
             '--include-partial-messages']
@@ -185,7 +185,7 @@ class Session:
         self._events: queue.Queue = queue.Queue()
         self._cost = 0.0
         self.proc = None
-        if not config.CLAUDE_BIN:
+        if not config.get_claude_bin():
             return
         try:
             self.proc = subprocess.Popen(
@@ -228,7 +228,7 @@ class Session:
         content = ''
         with self._lock:
             self.last_used = time.monotonic()     # ocupada desde ya, no al terminar
-            if not config.CLAUDE_BIN:
+            if not config.get_claude_bin():
                 out['error'] = 'no_cli'
                 return out
             if not self.alive():
@@ -333,7 +333,7 @@ def summarize(transcript: str, model: str | None = None, timeout: float = TIMEOU
 
 def _run(prompt: str, system_prompt: str, model: str, on_text, timeout: float, tag: str) -> dict:
     out = _empty_result(model)
-    if not config.CLAUDE_BIN:
+    if not config.get_claude_bin():
         out['error'] = 'no_cli'
         return out
     t0 = time.monotonic()

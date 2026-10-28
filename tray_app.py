@@ -1302,11 +1302,14 @@ class TrayApp:
                 log.warning(f"Error abriendo app: {e}")
             # Al final y en su propio hilo: es otra llamada a Claude y no debe
             # solaparse con el enriquecimiento ni retrasar el aviso de "listo".
-            threading.Thread(
-                target=self._suggest_glossary_terms,
-                args=(_transcript_for_export, content, participants, minutes_path.stem),
-                daemon=True, name='GlossarySuggest',
-            ).start()
+            # Solo con minutas completas: con las minutas breves o apagadas, quien
+            # usa Noted eligio no mandarle la reunion entera a Claude.
+            if minutes_mode == 'full':
+                threading.Thread(
+                    target=self._suggest_glossary_terms,
+                    args=(_transcript_for_export, content, participants, minutes_path.stem),
+                    daemon=True, name='GlossarySuggest',
+                ).start()
 
         if with_actions:
             enrich_and_save(minutes_path, PROJECT_DIR.parent, on_done=on_done)

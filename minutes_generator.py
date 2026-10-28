@@ -598,7 +598,8 @@ def run_claude(prompt: str, timeout: int = 300) -> str | None:
         else:
             si = None
         proc = subprocess.Popen(
-            [_claude_bin, '-p'],
+            # Sin guardar la sesion: el prompt lleva el transcript.
+            [_claude_bin, '-p', '--no-session-persistence'],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding='utf-8', env=_clean_env(),
             startupinfo=si if os.name == 'nt' else None,

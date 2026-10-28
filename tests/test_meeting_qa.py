@@ -136,7 +136,7 @@ def cli(monkeypatch):
         return proc
 
     monkeypatch.setattr(qa.subprocess, 'Popen', popen)
-    monkeypatch.setattr(config, 'CLAUDE_BIN', 'claude')
+    monkeypatch.setattr(config, 'get_claude_bin', lambda: 'claude')
     return st
 
 
@@ -208,7 +208,7 @@ def test_la_respuesta_llega_por_trozos_y_entera_al_final(cli):
 
 
 def test_sin_cli_lo_dice_sin_lanzar_nada(cli, monkeypatch):
-    monkeypatch.setattr(config, 'CLAUDE_BIN', None)
+    monkeypatch.setattr(config, 'get_claude_bin', lambda: None)
     assert qa.ask(LINES, 'x')['error'] == 'no_cli'
     assert cli['calls'] == []
 
