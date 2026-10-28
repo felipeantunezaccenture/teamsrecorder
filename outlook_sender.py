@@ -39,22 +39,69 @@ def _name_score(meeting_name: str, subject: str) -> float:
     return max(overlap, ratio)
 
 
+def _naive(dt):
+    """pywin32 devuelve las fechas de Outlook CON tzinfo (+00:00), aunque la
+    hora es la local de la pared. Restarlas de una fecha sin zona lanza
+    TypeError: durante semanas ese error se tragaba en un `except: continue` y
+    find_meeting_participants devolvía siempre [] sin dejar rastro."""
+    return dt.replace(tzinfo=None) if getattr(dt, 'tzinfo', None) else dt
+
+
+# Si no hay nombre que case, solo se acepta por hora una cita que empiece (o
+# esté en curso) a esta distancia: antes se cogía la "más cercana" aunque
+# fuese de dos horas después, y se le atribuían invitados de otra reunión.
+_MAX_TIME_FALLBACK = timedelta(minutes=20)
+
+_ROLES = {1: 'required', 2: 'optional', 3: 'resource'}
+_RESPONSES = {1: 'organizer', 2: 'tentative', 3: 'accepted', 4: 'declined', 5: 'no response'}
+
+
+def _clean_name(name: str) -> str:
+    """'Apellido, Nombre' (formato de la GAL de Exchange) -> 'Nombre Apellido'."""
+    name = (name or '').strip()
+    m = re.match(r'^([^,@]+),\s*([^,@]+)$', name)
+    return f"{m.group(2).strip()} {m.group(1).strip()}" if m else name
+
+
+def _recipient_info(rec, organizer: str = '') -> dict | None:
+    name = rec.Name
+    info = {'name': _clean_name(name), 'email': rec.Address}
+    # Rol y respuesta son un extra: un destinatario sin ellos (o un COM que los
+    # rechaza) sigue siendo un participante válido.
+    try:
+        info['role'] = _ROLES.get(int(rec.Type), 'required')
+    except Exception:
+        pass
+    try:
+        info['response'] = _RESPONSES.get(int(rec.MeetingResponseStatus), 'no response')
+    except Exception:
+        pass
+    if organizer and _norm_subject(name) == _norm_subject(organizer):
+        info['role'] = 'organizer'
+    return info
+
+
 def find_meeting_participants(recording_time: datetime, meeting_name: str = None,
                              window_minutes: int = 15) -> list[dict]:
     """
     Busca en el calendario de Outlook la reunión que corresponde a la grabación y
-    devuelve la lista de participantes (nombre + email).
+    devuelve la lista de invitados (nombre, email, rol y respuesta). Las
+    invitaciones de Teams son citas del calendario, así que esto las cubre.
 
     Empareja por NOMBRE (asunto del evento vs. nombre detectado de la reunión) y,
-    como respaldo, por proximidad de HORA.
+    como respaldo, por proximidad de HORA. Cada participante lleva además
+    'meeting_subject' con el asunto de la cita elegida.
     """
     try:
         outlook = _get_outlook()
         ns = outlook.GetNamespace('MAPI')
         calendar = ns.GetDefaultFolder(9)  # olFolderCalendar
 
-        start = recording_time - timedelta(minutes=window_minutes)
-        end   = recording_time + timedelta(hours=3)
+        rec_time = _naive(recording_time)
+        # Desde 4 h antes: una reunión larga a la que entras tarde empezó mucho
+        # antes de que se disparase la grabación.
+        start = rec_time - timedelta(hours=4)
+        end   = rec_time + timedelta(hours=3)
 
         items = calendar.Items
         items.Sort('[Start]')
@@ -69,21 +116,30 @@ def find_meeting_participants(recording_time: datetime, meeting_name: str = None
         candidates = []
         for item in filtered:
             try:
-                item_start = item.Start
-                if hasattr(item_start, 'year'):
-                    diff = abs(item_start - recording_time.replace(tzinfo=None))
-                    candidates.append((item, diff))
-            except Exception:
+                if getattr(item, 'AllDayEvent', False):
+                    continue
+                item_start = _naive(item.Start)
+                if not hasattr(item_start, 'year'):
+                    continue
+                try:
+                    item_end = _naive(item.End)
+                except Exception:
+                    item_end = item_start
+                running = item_start <= rec_time <= item_end
+                candidates.append((item, abs(item_start - rec_time), running, item_start))
+            except Exception as e:
+                log.warning(f"Cita de calendario ilegible: {e}")
                 continue
 
         if not candidates:
+            log.info(f"Calendario sin citas cerca de {rec_time:%d/%m %H:%M}")
             return []
 
         best_item = None
 
         if meeting_name:
             scored = []
-            for item, diff in candidates:
+            for item, diff, *_ in candidates:
                 try:
                     subj = item.Subject or ''
                 except Exception:
@@ -97,18 +153,40 @@ def find_meeting_participants(recording_time: datetime, meeting_name: str = None
                 log.info(f"Reunión emparejada por nombre (score {scored[0][0]:.2f}): {best_item.Subject}")
 
         if best_item is None:
-            best_item = min(candidates, key=lambda x: x[1])[0]
+            # Primero las que EMPIEZAN junto a la grabación. Las que ya estaban
+            # en marcha (la reunión anterior, que aún no ha acabado) solo valen
+            # si no hay ninguna: con las dos a distancia 0 ganaba la anterior.
+            near = [c for c in candidates if c[1] <= _MAX_TIME_FALLBACK]
+            if near:
+                best_item = min(near, key=lambda x: x[1])[0]
+            else:
+                running = [c for c in candidates if c[2]]
+                if not running:
+                    log.info("Ninguna cita casa por nombre, empieza a menos de "
+                             f"{_MAX_TIME_FALLBACK.seconds // 60} min ni está en curso")
+                    return []
+                best_item = max(running, key=lambda x: x[3])[0]
             log.info(f"Reunión emparejada por hora: {best_item.Subject}")
+
+        try:
+            subject = best_item.Subject or ''
+        except Exception:
+            subject = ''
+        try:
+            organizer = best_item.Organizer or ''
+        except Exception:
+            organizer = ''
 
         participants = []
         for rec in best_item.Recipients:
             try:
-                participants.append({
-                    'name': rec.Name,
-                    'email': rec.Address,
-                })
+                info = _recipient_info(rec, organizer)
             except Exception:
-                pass
+                continue
+            if info.get('role') == 'resource':      # salas y equipos, no personas
+                continue
+            info['meeting_subject'] = subject
+            participants.append(info)
         return participants
     except Exception as e:
         log.warning(f"No se pudieron obtener participantes de Outlook: {e}")
@@ -156,7 +234,7 @@ def find_meeting_series(recording_time: datetime, title_hint: str = None,
         best_item = None
         if title_hint:
             scored = []
-            for item, diff in candidates:
+            for item, diff, *_ in candidates:
                 try:
                     subj = item.Subject or ''
                 except Exception:

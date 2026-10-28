@@ -39,7 +39,7 @@ scripts\install_autostart.bat   # registers Task Scheduler entry
 # to run without console: scripts\start_silent.vbs
 ```
 
-**Diagnostic scripts** (not production, just dev helpers): `tools/check_audio.py`, `tools/check_teams.py`, `tools/check_onenote.py`, `tools/check_onenote_graph.py`, `tools/diagnostico.py`. GSK one-offs: `tools/gsk/`.
+**Diagnostic scripts** (not production, just dev helpers): `tools/check_audio.py`, `tools/check_teams.py`, `tools/check_onenote.py`, `tools/check_onenote_graph.py`, `tools/diagnostico.py`, `tools/check_glossary_ui.py` (end-to-end check of the glossary UI against the real `AppAPI`, needs `playwright`). GSK one-offs: `tools/gsk/`.
 
 ## Configuration
 
@@ -133,6 +133,7 @@ Action blocks embedded in markdown:
 | Tray menu items / pipeline triggers | `tray_app.py` |
 | Web UI layout and filtering | `web/app.js`, `web/app.css` |
 | Storage paths / retention policy | `storage.py` |
+| Glossary (hotwords for Whisper, transcript corrections, minutes prompt, pending suggestions) | `glossary.py`, `glossary.json` (personal, gitignored); UI in Settings → `web/app.js` (`openGlossaryDrawer`), API in `app_window.AppAPI` (`*_glossary_*`); suggestions generated after each meeting by `tray_app._suggest_glossary_terms` |
 
 ## Logging
 

@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from config import ME_NAME
+
 
 @dataclass
 class Action:
@@ -15,6 +17,55 @@ class Action:
     raw_block: str
     assignee: str | None = None   # pre-populated from table for human actions
     deadline: str | None = None   # from table column
+
+
+_OWNER_NOISE = re.compile(
+    r'\(\s*(?:claude|manual|atribuci[oó]n inferida|attribution inferred|as stated|'
+    r'sin concretar|unclear|name unclear)[^)]*\)', re.IGNORECASE)
+_OWNER_SPLIT = re.compile(r'\s*[/,&;()]\s*|\s+y\s+|\s+and\s+', re.IGNORECASE)
+# Etiquetas genéricas que el modelo usa cuando no sabe quién es: no son personas.
+_OWNER_PLACEHOLDER = re.compile(
+    r'^(?:\[?otros\]?|others?|equipo|team|all|todos|tbd|tba|n/?a|none|ninguno|'
+    r'sin concretar|sin asignar|por definir|to be defined|unassigned|unclear|name unclear|'
+    r'participant\w*|participante\w*|attendee\w*|asistente\w*|speaker\w*|hablante\w*|'
+    r'presentad\w*|presenter|compa[ñn]er[oa]|cliente|client|key question|-+|—+)$'
+    r'|^(?:recorder|grabador)\b', re.IGNORECASE)
+_RECORDER_RE = re.compile(r'^(?:recorder|grabador\w*)\b', re.IGNORECASE)
+
+
+def _fold(s: str) -> str:
+    import unicodedata
+    return ''.join(c for c in unicodedata.normalize('NFD', s)
+                   if unicodedata.category(c) != 'Mn').lower().strip()
+
+
+def normalize_assignee(raw: str | None, me_name: str = '') -> str | None:
+    """Reduce el responsable a nombres de persona reales, o None.
+
+    El tablero agrupa por esta cadena exacta: "Otros", "[Otros]", "Otros
+    (atribución inferida)", "Inés (Claude)"… eran cada uno su propio grupo.
+    """
+    if not raw:
+        return None
+    cleaned = re.sub(r'/a\b', '', _OWNER_NOISE.sub(' ', raw), flags=re.IGNORECASE)  # "Grabador/a"
+    me_first = _fold(me_name).split()[0] if me_name.strip() else ''
+    names: list[str] = []
+    for part in _OWNER_SPLIT.split(cleaned):
+        part = part.strip(' .-—')
+        if not part:
+            continue
+        if _RECORDER_RE.match(part):
+            part = me_name.strip()
+            if not part:
+                continue
+        elif _OWNER_PLACEHOLDER.match(part):
+            continue
+        # Ines / Inés / Ines Campos → la grafía configurada en Ajustes.
+        if me_first and _fold(part).split()[0] == me_first:
+            part = me_name.strip()
+        if part.lower() not in (n.lower() for n in names):
+            names.append(part)
+    return ' / '.join(names) or None
 
 
 def _guess_project(text: str, projects_dir: Path | None) -> str | None:
@@ -188,8 +239,7 @@ def parse_table_actions(minutes_text: str, start_index: int = 0) -> list[Action]
 
         assignee = cells[1] if len(cells) > 1 else None
         deadline = cells[2] if len(cells) > 2 else None
-        if not assignee or assignee in ('-', '—', ''):
-            assignee = None
+        assignee = normalize_assignee(assignee, ME_NAME)
         if not deadline or deadline in ('-', '—', ''):
             deadline = None
 

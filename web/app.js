@@ -299,6 +299,52 @@ const T = {
     delete_project_btn: 'Eliminar proyecto',
     send_email: 'Enviar por correo',
     restart_tour: 'Repetir tour de bienvenida',
+    privacy_btn: 'Privacidad & Compliance',
+    privacy_geo_warning: '⚠ Noted no está recomendado fuera de Europa y Estados Unidos. Su uso en otras regiones puede no cumplir con la legislación local de protección de datos aplicable.',
+    privacy_ai_title: 'Servicios de IA que procesan tus datos',
+    privacy_ai_whisper: 'transcripción de audio. Se ejecuta <strong>localmente</strong> en tu equipo. El audio nunca sale de tu máquina.',
+    privacy_ai_claude: 'generación de minutas y enriquecimiento de acciones. El texto de la transcripción se envía a los servidores de Anthropic a través del CLI de Claude para su procesamiento.',
+    privacy_training_title: 'Uso para entrenamiento de modelos',
+    privacy_training_body: 'Anthropic no usa los datos procesados a través de Claude para entrenar sus modelos. Los datos están sujetos a la política de privacidad de Anthropic.',
+    privacy_retention_title: 'Tiempos de retención',
+    privacy_retention_audio: 'Grabaciones de audio (WAV): <strong>10 días</strong>, borrado automático.',
+    privacy_retention_minutes: 'Minutas y transcripciones: <strong>90 días</strong> por defecto.',
+    privacy_access_title: 'Acceso a los datos',
+    privacy_access_body: 'Noted es una aplicación 100% local. Los datos se almacenan únicamente en tu equipo. No existe sincronización en la nube, acceso remoto ni mecanismo de compartir con otros usuarios.',
+    privacy_biometrics_title: 'Biometría',
+    privacy_biometrics_body: 'Las grabaciones de voz se usan exclusivamente para transcripción. No se aplica ningún análisis biométrico, identificación de voz ni creación de perfiles de hablante.',
+    privacy_links_title: 'Referencias',
+    privacy_anthropic_link: 'Política de privacidad de Anthropic',
+    glossary_title: 'Glosario',
+    glossary_desc: 'Nombres, siglas y términos que Whisper transcribe mal. Los errores que añadas se corrigen solos en cada transcripción y se usan como pista para transcribir mejor.',
+    glossary_manage: 'Gestionar',
+    glossary_summary: (n, p) => `${n} ${n === 1 ? 'entrada' : 'entradas'}` + (p ? ` · <span class="gl-pending">● ${p} ${p === 1 ? 'sugerencia pendiente' : 'sugerencias pendientes'}</span>` : ''),
+    glossary_scope_all: 'Global (todas las reuniones)',
+    glossary_scope_hint_all: 'Se aplican a todas las reuniones.',
+    glossary_scope_hint_project: 'Se suman a las globales en las reuniones de este proyecto.',
+    glossary_add: '+ Añadir',
+    glossary_suggestions: 'Sugerencias',
+    glossary_suggestions_hint: 'Detectadas por Claude en tus últimas reuniones. No se aplican hasta que las apruebes.',
+    glossary_approve: 'Aprobar',
+    glossary_dismiss: 'Descartar',
+    glossary_corrects: 'Corrige',
+    glossary_empty: 'Aún no hay entradas en este ámbito.',
+    glossary_term: 'Término correcto',
+    glossary_term_ph: 'p. ej. Kinaxis',
+    glossary_category: 'Categoría',
+    glossary_aliases: 'Errores que corrige',
+    glossary_aliases_ph: 'Kinexis, Kinaxys (separados por comas)',
+    glossary_meaning: 'Significado (opcional)',
+    glossary_meaning_ph: 'p. ej. Integrated Business Planning',
+    glossary_term_required: 'Escribe el término correcto',
+    glossary_saved: 'Glosario actualizado',
+    glossary_delete_title: 'Eliminar del glosario',
+    glossary_delete_confirm: (term) => `¿Eliminar «${term}» del glosario?`,
+    glossary_cat_acronym: 'Siglas',
+    glossary_cat_company: 'Empresas',
+    glossary_cat_person: 'Personas',
+    glossary_cat_term: 'Términos',
+    glossary_cat_english: 'Inglés',
     lang_pick_title: 'Elige tu idioma',
     lang_pick_subtitle: 'Puedes cambiarlo después en Ajustes',
     tour_btn_next: 'Siguiente', tour_btn_prev: 'Anterior', tour_btn_done: 'Empezar', tour_btn_skip: 'Saltar tour',
@@ -579,6 +625,52 @@ const T = {
     delete_project_btn: 'Delete project',
     send_email: 'Send by email',
     restart_tour: 'Replay welcome tour',
+    privacy_btn: 'Privacy & Compliance',
+    privacy_geo_warning: '⚠ Noted is not recommended outside of Europe and the United States. Its use in other regions may not comply with applicable local data protection laws.',
+    privacy_ai_title: 'AI services that process your data',
+    privacy_ai_whisper: 'audio transcription. Runs <strong>locally</strong> on your device. Audio never leaves your machine.',
+    privacy_ai_claude: 'meeting minutes generation and action enrichment. The transcription text is sent to Anthropic\'s servers via the Claude CLI for processing.',
+    privacy_training_title: 'Use for model training',
+    privacy_training_body: 'Anthropic does not use data processed through Claude to train its models. Data is subject to Anthropic\'s privacy policy.',
+    privacy_retention_title: 'Retention periods',
+    privacy_retention_audio: 'Audio recordings (WAV): <strong>10 days</strong>, deleted automatically.',
+    privacy_retention_minutes: 'Minutes and transcripts: <strong>90 days</strong> by default.',
+    privacy_access_title: 'Data access',
+    privacy_access_body: 'Noted is a 100% local application. Data is stored exclusively on your device. There is no cloud sync, remote access, or sharing mechanism.',
+    privacy_biometrics_title: 'Biometrics',
+    privacy_biometrics_body: 'Voice recordings are used exclusively for transcription. No biometric analysis, voice identification, or speaker profiling is applied.',
+    privacy_links_title: 'References',
+    privacy_anthropic_link: 'Anthropic Privacy Policy',
+    glossary_title: 'Glossary',
+    glossary_desc: 'Names, acronyms and terms that Whisper mis-transcribes. Errors you add are fixed automatically in every transcript and used as hints to transcribe better.',
+    glossary_manage: 'Manage',
+    glossary_summary: (n, p) => `${n} ${n === 1 ? 'entry' : 'entries'}` + (p ? ` · <span class="gl-pending">● ${p} pending ${p === 1 ? 'suggestion' : 'suggestions'}</span>` : ''),
+    glossary_scope_all: 'Global (all meetings)',
+    glossary_scope_hint_all: 'They apply to all meetings.',
+    glossary_scope_hint_project: 'They are added to the global ones in meetings of this project.',
+    glossary_add: '+ Add',
+    glossary_suggestions: 'Suggestions',
+    glossary_suggestions_hint: 'Detected by Claude in your latest meetings. They are not applied until you approve them.',
+    glossary_approve: 'Approve',
+    glossary_dismiss: 'Dismiss',
+    glossary_corrects: 'Fixes',
+    glossary_empty: 'No entries in this scope yet.',
+    glossary_term: 'Correct term',
+    glossary_term_ph: 'e.g. Kinaxis',
+    glossary_category: 'Category',
+    glossary_aliases: 'Errors it fixes',
+    glossary_aliases_ph: 'Kinexis, Kinaxys (comma separated)',
+    glossary_meaning: 'Meaning (optional)',
+    glossary_meaning_ph: 'e.g. Integrated Business Planning',
+    glossary_term_required: 'Enter the correct term',
+    glossary_saved: 'Glossary updated',
+    glossary_delete_title: 'Remove from glossary',
+    glossary_delete_confirm: (term) => `Remove "${term}" from the glossary?`,
+    glossary_cat_acronym: 'Acronyms',
+    glossary_cat_company: 'Companies',
+    glossary_cat_person: 'People',
+    glossary_cat_term: 'Terms',
+    glossary_cat_english: 'English',
     lang_pick_title: 'Choose your language',
     lang_pick_subtitle: 'You can change it later in Settings',
     tour_btn_next: 'Next', tour_btn_prev: 'Previous', tour_btn_done: 'Get started', tour_btn_skip: 'Skip tour',
@@ -853,6 +945,52 @@ const T = {
     add_action_cancel: 'Cancel·lar',
     send_email: 'Enviar per correu',
     restart_tour: 'Repetir tour de benvinguda',
+    privacy_btn: 'Privadesa & Compliment',
+    privacy_geo_warning: '⚠ Noted no es recomana fora d\'Europa i els Estats Units. El seu ús en altres regions pot no complir amb la legislació local de protecció de dades aplicable.',
+    privacy_ai_title: 'Serveis d\'IA que processen les teves dades',
+    privacy_ai_whisper: 'transcripció d\'àudio. S\'executa <strong>localment</strong> al teu equip. L\'àudio no surt mai de la teva màquina.',
+    privacy_ai_claude: 'generació d\'actes i enriquiment d\'accions. El text de la transcripció s\'envia als servidors d\'Anthropic a través del CLI de Claude per al seu processament.',
+    privacy_training_title: 'Ús per a entrenament de models',
+    privacy_training_body: 'Anthropic no utilitza les dades processades a través de Claude per entrenar els seus models. Les dades estan subjectes a la política de privadesa d\'Anthropic.',
+    privacy_retention_title: 'Temps de retenció',
+    privacy_retention_audio: 'Gravacions d\'àudio (WAV): <strong>10 dies</strong>, esborrat automàtic.',
+    privacy_retention_minutes: 'Actes i transcripcions: <strong>90 dies</strong> per defecte.',
+    privacy_access_title: 'Accés a les dades',
+    privacy_access_body: 'Noted és una aplicació 100% local. Les dades s\'emmagatzemen únicament al teu equip. No existeix sincronització al núvol, accés remot ni mecanisme de compartir.',
+    privacy_biometrics_title: 'Biometria',
+    privacy_biometrics_body: 'Les gravacions de veu s\'utilitzen exclusivament per a transcripció. No s\'aplica cap anàlisi biomètrica, identificació de veu ni creació de perfils de parlant.',
+    privacy_links_title: 'Referències',
+    privacy_anthropic_link: 'Política de privadesa d\'Anthropic',
+    glossary_title: 'Glossari',
+    glossary_desc: 'Noms, sigles i termes que Whisper transcriu malament. Els errors que afegeixis es corregeixen sols a cada transcripció i s\'usen com a pista per transcriure millor.',
+    glossary_manage: 'Gestionar',
+    glossary_summary: (n, p) => `${n} ${n === 1 ? 'entrada' : 'entrades'}` + (p ? ` · <span class="gl-pending">● ${p} ${p === 1 ? 'suggeriment pendent' : 'suggeriments pendents'}</span>` : ''),
+    glossary_scope_all: 'Global (totes les reunions)',
+    glossary_scope_hint_all: 'S\'apliquen a totes les reunions.',
+    glossary_scope_hint_project: 'S\'afegeixen a les globals a les reunions d\'aquest projecte.',
+    glossary_add: '+ Afegir',
+    glossary_suggestions: 'Suggeriments',
+    glossary_suggestions_hint: 'Detectats per Claude a les teves últimes reunions. No s\'apliquen fins que els aprovis.',
+    glossary_approve: 'Aprovar',
+    glossary_dismiss: 'Descartar',
+    glossary_corrects: 'Corregeix',
+    glossary_empty: 'Encara no hi ha entrades en aquest àmbit.',
+    glossary_term: 'Terme correcte',
+    glossary_term_ph: 'p. ex. Kinaxis',
+    glossary_category: 'Categoria',
+    glossary_aliases: 'Errors que corregeix',
+    glossary_aliases_ph: 'Kinexis, Kinaxys (separats per comes)',
+    glossary_meaning: 'Significat (opcional)',
+    glossary_meaning_ph: 'p. ex. Integrated Business Planning',
+    glossary_term_required: 'Escriu el terme correcte',
+    glossary_saved: 'Glossari actualitzat',
+    glossary_delete_title: 'Eliminar del glossari',
+    glossary_delete_confirm: (term) => `Eliminar «${term}» del glossari?`,
+    glossary_cat_acronym: 'Sigles',
+    glossary_cat_company: 'Empreses',
+    glossary_cat_person: 'Persones',
+    glossary_cat_term: 'Termes',
+    glossary_cat_english: 'Anglès',
     lang_pick_title: 'Tria el teu idioma',
     lang_pick_subtitle: 'Pots canviar-lo des dels Ajustos',
     tour_btn_next: 'Següent', tour_btn_prev: 'Anterior', tour_btn_done: 'Comença', tour_btn_skip: 'Saltar tour',
@@ -909,6 +1047,8 @@ function applyLang(lang) {
   if (!document.getElementById('view-projects').classList.contains('hidden')) {
     loadProjectsSettings();
   }
+  _renderGlossarySummary();
+  _renderGlossaryDrawer();
 }
 
 function showLangPicker(onPick) {
@@ -966,6 +1106,16 @@ window.addEventListener('pywebviewready', async () => {
 
   // Pipeline status footer
   setInterval(updatePipelineFooter, 2000);
+
+  // Glosario: el punto de aviso de Ajustes depende de las sugerencias que llegan
+  // cuando termina de procesarse una reunión, así que se vuelve a mirar de vez en cuando.
+  refreshGlossary();
+  setInterval(refreshGlossary, 30000);
+  document.getElementById('glossary-drawer')?.addEventListener('click', _onGlossaryClick);
+  document.getElementById('gl-form')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); saveGlossaryEntry(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancelGlossaryEntry(); }
+  });
 
   // Teclado: rename modal
   document.getElementById('rename-modal-input')?.addEventListener('keydown', e => {
@@ -1038,7 +1188,7 @@ function showView(view) {
   if (view === 'actions') loadTaskBoard();
   if (view === 'projects') loadProjectsSettings();
   if (view === 'trash') loadTrash();
-  if (view === 'settings') loadRecordingSettings();
+  if (view === 'settings') { loadRecordingSettings(); refreshGlossary(); }
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -1764,14 +1914,29 @@ function actionMetaHtml(a, meetingDate, claudeExec) {
 
 // Normaliza el responsable para agrupar: mismas personas → misma clave,
 // sin importar el orden ni el marcador "(Claude)".
+// Etiquetas genéricas que el modelo escribe cuando no sabe quién es (Otros,
+// Equipo, "atribución inferida"…): no son personas, caen en "Sin responsable".
+const _OWNER_NOISE_RE = /\((?:claude|manual|atribuci[oó]n inferida|attribution inferred|as stated|sin concretar|unclear|name unclear)[^)]*\)/ig;
+const _OWNER_PLACEHOLDER_RE = /^(?:\[?otros\]?|others?|equipo|team|all|todos|tbd|tba|n\/?a|none|ninguno|sin concretar|sin asignar|por definir|to be defined|unassigned|unclear|name unclear|participant\w*|participante\w*|attendee\w*|asistente\w*|speaker\w*|hablante\w*|presentad\w*|presenter|compa[ñn]er[oa]|cliente|client|key question|-+|—+)$|^(?:recorder|grabador)\b/i;
+const _ownerLabels = new Map();   // key → primera grafía vista, para no duplicar por tildes/mayúsculas
+const _foldOwner = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
 function _ownerKey(assignee) {
   const raw = (assignee || '').trim();
   if (!raw) return { key: '__none__', label: t('no_owner') };
-  const cleaned = raw.replace(/\((?:claude|manual)\)/ig, '').replace(/\s+/g, ' ').trim();
-  const parts = cleaned.split(/\s*[\/,&]\s*|\s+y\s+|\s+and\s+/i).map(p => p.trim()).filter(p => p && p !== '-');
+  const cleaned = raw.replace(_OWNER_NOISE_RE, ' ').replace(/\/a\b/ig, '').replace(/\s+/g, ' ').trim();
+  const parts = cleaned.split(/\s*[\/,&;()]\s*|\s+y\s+|\s+and\s+/i)
+    .map(p => p.trim().replace(/^[\s.\-—]+|[\s.\-—]+$/g, ''))
+    .filter(p => p && !_OWNER_PLACEHOLDER_RE.test(p));
   if (!parts.length) return { key: '__none__', label: t('no_owner') };
-  const key = parts.map(p => p.toLowerCase()).sort().join('|');
-  return { key, label: parts.join(' / ') };
+  const key = parts.map(_foldOwner).sort().join('|');
+  if (!_ownerLabels.has(key)) _ownerLabels.set(key, parts.join(' / '));
+  return { key, label: _ownerLabels.get(key) };
+}
+
+function _ownerFilterVal(assignee) {
+  const o = _ownerKey(assignee);
+  return o.key === '__none__' ? '__none__' : o.label;
 }
 
 function renderActionCards(actions, path, container, meetingDate) {
@@ -2143,10 +2308,11 @@ function _getGroupByColumns(tasks) {
   if (_groupBy === 'assignee') {
     const seen = new Set();
     const cols = [];
-    tasks.forEach(t => {
-      if (t.assignee && !seen.has(t.assignee)) {
-        seen.add(t.assignee);
-        cols.push({id: t.assignee, name: t.assignee, color: '#8b5cf6'});
+    tasks.forEach(task => {
+      const o = _ownerKey(task.assignee);
+      if (o.key !== '__none__' && !seen.has(o.key)) {
+        seen.add(o.key);
+        cols.push({id: o.key, name: o.label, color: '#8b5cf6'});
       }
     });
     cols.push({id:'unassigned', name: currentLang==='en'?'Unassigned':'Sin asignar', color:'#6b7280'});
@@ -2168,7 +2334,10 @@ function _getGroupByColumns(tasks) {
 function _getTaskColId(task, columns) {
   if (_groupBy === 'status') return task.status || 'not_started';
   if (_groupBy === 'priority') return task.priority || 'none_p';
-  if (_groupBy === 'assignee') return task.assignee || 'unassigned';
+  if (_groupBy === 'assignee') {
+    const k = _ownerKey(task.assignee).key;
+    return k === '__none__' ? 'unassigned' : k;
+  }
   if (_groupBy === 'due_date') {
     const d = _parseValidDate(task.end_date || task.deadline);
     if (!d) return 'no_date';
@@ -2247,7 +2416,7 @@ function _filteredTasks() {
   if (_colFilters.status?.size)
     tasks = tasks.filter(t => _colFilters.status.has(t.status || 'not_started'));
   if (_colFilters.assignee?.size)
-    tasks = tasks.filter(t => _colFilters.assignee.has(t.assignee || '__none__'));
+    tasks = tasks.filter(task => _colFilters.assignee.has(_ownerFilterVal(task.assignee)));
   if (_colFilters.priority?.size)
     tasks = tasks.filter(t => _colFilters.priority.has(t.priority || '__none__'));
   if (_colFilters.start_date?.size)
@@ -2270,7 +2439,7 @@ function _colFilterValues(col) {
   tasks.forEach(t => {
     let v;
     if (col === 'status')     v = t.status     || 'not_started';
-    else if (col === 'assignee')  v = t.assignee    || '__none__';
+    else if (col === 'assignee')  v = _ownerFilterVal(t.assignee);
     else if (col === 'priority')  v = t.priority    || '__none__';
     else if (col === 'start_date') v = t.start_date || '__none__';
     else if (col === 'end_date')  v = t.end_date || t.deadline || '__none__';
@@ -3869,8 +4038,11 @@ async function confirmRenameModal() {
   const input = document.getElementById('rename-modal-input');
   const val = input?.value?.trim();
   if (!val) return;
+  // closeRenameModal() pone _renameCallback a null: hay que guardarlo ANTES.
+  // Leerlo después hacía que "Guardar" cerrara el modal sin renombrar nada.
+  const cb = _renameCallback;
   closeRenameModal();
-  if (_renameCallback) await _renameCallback(val);
+  if (cb) await cb(val);
 }
 
 // ── Modal de confirmación genérico ────────────────────────────────────────────
@@ -4899,6 +5071,7 @@ async function confirmRegen(path) {
   const bar = document.getElementById('regen-bar');
   _showRegenProgress(bar);
   _regenPath = path;
+  if (!_pipelinePanelOpen) togglePipelinePanel();
 
   const ok = await pywebview.api.regenerate_minutes(path, ctx);
   if (!ok) {
@@ -5568,7 +5741,20 @@ function _saveStickies() {
 
 
 // ── Privacy & Compliance drawer ──────────────────────────────────────────────
+function _renderPrivacyDrawer() {
+  const aiBody = document.getElementById('privacy-ai-body');
+  if (aiBody) aiBody.innerHTML =
+    `<p style="margin:0 0 6px"><strong>Whisper</strong> — ${t('privacy_ai_whisper')}</p>` +
+    `<p style="margin:0"><strong>Claude (Anthropic)</strong> — ${t('privacy_ai_claude')}</p>`;
+
+  const retBody = document.getElementById('privacy-retention-body');
+  if (retBody) retBody.innerHTML =
+    `<p style="margin:0 0 4px">${t('privacy_retention_audio')}</p>` +
+    `<p style="margin:0">${t('privacy_retention_minutes')}</p>`;
+}
+
 function openPrivacyDrawer() {
+  _renderPrivacyDrawer();
   document.getElementById('privacy-drawer')?.classList.add('open');
   document.getElementById('privacy-drawer-backdrop')?.classList.add('open');
 }
@@ -5576,4 +5762,193 @@ function openPrivacyDrawer() {
 function closePrivacyDrawer() {
   document.getElementById('privacy-drawer')?.classList.remove('open');
   document.getElementById('privacy-drawer-backdrop')?.classList.remove('open');
+}
+
+// ── Glosario (Ajustes) ───────────────────────────────────────────────────────
+// El estado vive en glossary.json; cada llamada a la API devuelve el estado
+// completo y se repinta desde ahí, sin mantener una copia propia que se desincronice.
+
+const GLOSSARY_CATEGORIES = ['acronym', 'company', 'person', 'term', 'english'];
+let _glossary = { entries: [], suggestions: [], pending: 0, projects: [] };
+let _glScope = '';        // '' = global; si no, id del proyecto
+let _glEditing = null;    // {term, project} de la entrada que se edita; null = nueva
+let _glVisible = [];      // entradas que se ven ahora (se actúa sobre ellas por índice)
+
+async function refreshGlossary() {
+  try { _setGlossary(await pywebview.api.get_glossary()); } catch (_) {}
+}
+
+function _setGlossary(g) {
+  if (!g || g.error) return;
+  // El refresco periódico no debe reconstruir el drawer si nada ha cambiado
+  // (cerraría un desplegable abierto o pisaría lo que se está escribiendo).
+  const changed = JSON.stringify(g) !== JSON.stringify(_glossary);
+  _glossary = g;
+  _renderGlossarySummary();
+  if (changed) _renderGlossaryDrawer();
+}
+
+function _renderGlossarySummary() {
+  const el = document.getElementById('glossary-summary');
+  if (el) el.innerHTML = t('glossary_summary', _glossary.entries.length, _glossary.pending);
+  document.getElementById('settings-dot')?.classList.toggle('hidden', !_glossary.pending);
+}
+
+function _glSourceLabel(src) {
+  return String(src || '').replace(/^\d{8}_\d{4}_/, '').replace(/_/g, ' ');
+}
+
+function _glRow(e, i, actions, extraClass = '') {
+  const fixes = e.aliases.length
+    ? `${escHtml(t('glossary_corrects'))}: <b>${e.aliases.map(escHtml).join(', ')}</b>` : '';
+  const meta = [e.meaning ? escHtml(e.meaning) : '', fixes,
+                e.source ? escHtml(_glSourceLabel(e.source)) : ''].filter(Boolean).join(' · ');
+  return `<div class="gl-row ${extraClass}">
+    <div class="gl-main">
+      <div class="gl-term">${escHtml(e.term)}</div>
+      ${meta ? `<div class="gl-meta">${meta}</div>` : ''}
+    </div>
+    <div class="gl-actions">${actions}</div>
+  </div>`;
+}
+
+function _renderGlossaryDrawer() {
+  if (!document.getElementById('glossary-drawer')) return;
+
+  // Ámbito: global o un proyecto concreto.
+  const projects = _glossary.projects || [];
+  if (_glScope && !projects.some(p => p.id === _glScope)) _glScope = '';
+  const scopeSel = document.getElementById('gl-scope');
+  scopeSel.innerHTML = `<option value="">${escHtml(t('glossary_scope_all'))}</option>` +
+    projects.map(p => `<option value="${escHtml(p.id)}">${escHtml(p.name)}</option>`).join('');
+  scopeSel.value = _glScope;
+  document.getElementById('gl-scope-hint').textContent =
+    t(_glScope ? 'glossary_scope_hint_project' : 'glossary_scope_hint_all');
+
+  // Categorías del formulario (se conserva la elegida al repintar).
+  const catSel = document.getElementById('gl-f-category');
+  const cur = catSel.value;
+  catSel.innerHTML = GLOSSARY_CATEGORIES
+    .map(c => `<option value="${c}">${escHtml(t('glossary_cat_' + c))}</option>`).join('');
+  catSel.value = cur || 'term';
+
+  // Sugerencias pendientes (no tienen ámbito: se aprueban en el que esté elegido).
+  const sugg = _glossary.suggestions || [];
+  document.getElementById('gl-suggestions-block').classList.toggle('hidden', !sugg.length);
+  document.getElementById('gl-suggestions').innerHTML = sugg.map((s, i) => _glRow(s, i,
+    `<button class="btn btn-primary btn-sm" data-gl="approve" data-i="${i}">${escHtml(t('glossary_approve'))}</button>
+     <button class="btn btn-ghost btn-sm" data-gl="dismiss" data-i="${i}">${escHtml(t('glossary_dismiss'))}</button>`,
+    'gl-sugg')).join('');
+
+  // Entradas del ámbito, agrupadas por categoría.
+  _glVisible = (_glossary.entries || []).filter(e => (e.project || '') === _glScope);
+  let html = '';
+  for (const cat of GLOSSARY_CATEGORIES) {
+    const rows = [];
+    _glVisible.forEach((e, i) => {
+      if (e.category !== cat) return;
+      rows.push(_glRow(e, i,
+        `<button class="gl-icon-btn" data-gl="edit" data-i="${i}" title="${escHtml(t('btn_edit'))}">✎</button>
+         <button class="gl-icon-btn" data-gl="del" data-i="${i}" title="${escHtml(t('btn_delete'))}">🗑</button>`));
+    });
+    if (rows.length) {
+      html += `<div class="drawer-field-label gl-group">${escHtml(t('glossary_cat_' + cat))}</div>${rows.join('')}`;
+    }
+  }
+  document.getElementById('gl-entries').innerHTML =
+    html || `<div class="settings-card-desc">${escHtml(t('glossary_empty'))}</div>`;
+}
+
+function _onGlossaryClick(ev) {
+  const btn = ev.target.closest('[data-gl]');
+  if (!btn) return;
+  const i = Number(btn.dataset.i);
+  if (btn.dataset.gl === 'edit') editGlossaryEntry(i);
+  else if (btn.dataset.gl === 'del') deleteGlossaryEntry(i);
+  else resolveGlossarySuggestion(i, btn.dataset.gl);          // approve | dismiss
+}
+
+async function openGlossaryDrawer() {
+  await refreshGlossary();
+  document.getElementById('glossary-drawer')?.classList.add('open');
+  document.getElementById('glossary-drawer-backdrop')?.classList.add('open');
+}
+
+function closeGlossaryDrawer() {
+  cancelGlossaryEntry();
+  document.getElementById('glossary-drawer')?.classList.remove('open');
+  document.getElementById('glossary-drawer-backdrop')?.classList.remove('open');
+}
+
+function setGlossaryScope(value) {
+  _glScope = value || '';
+  cancelGlossaryEntry();
+  _renderGlossaryDrawer();
+}
+
+function _glOpenForm(e) {
+  document.getElementById('gl-f-term').value = e.term || '';
+  document.getElementById('gl-f-category').value = e.category || 'term';
+  document.getElementById('gl-f-aliases').value = (e.aliases || []).join(', ');
+  document.getElementById('gl-f-meaning').value = e.meaning || '';
+  const form = document.getElementById('gl-form');
+  form.classList.remove('hidden');
+  form.scrollIntoView({ block: 'nearest' });
+  document.getElementById('gl-f-term').focus();
+}
+
+function startGlossaryEntry() {
+  _glEditing = null;
+  _glOpenForm({});
+}
+
+function editGlossaryEntry(i) {
+  const e = _glVisible[i];
+  if (!e) return;
+  _glEditing = { term: e.term, project: e.project || null };
+  _glOpenForm(e);
+}
+
+function cancelGlossaryEntry() {
+  _glEditing = null;
+  document.getElementById('gl-form')?.classList.add('hidden');
+}
+
+async function saveGlossaryEntry() {
+  const term = document.getElementById('gl-f-term').value.trim();
+  if (!term) { showToast(t('glossary_term_required')); return; }
+  const entry = {
+    term,
+    category: document.getElementById('gl-f-category').value,
+    aliases: document.getElementById('gl-f-aliases').value.split(',').map(a => a.trim()).filter(Boolean),
+    meaning: document.getElementById('gl-f-meaning').value.trim(),
+    project: _glScope || null,
+  };
+  try {
+    const res = await pywebview.api.save_glossary_entry(entry, _glEditing);
+    if (res?.error) { showToast(t('glossary_term_required')); return; }
+    cancelGlossaryEntry();
+    _setGlossary(res);
+    showToast(t('glossary_saved'));
+  } catch (e) { showToast(String(e)); }
+}
+
+function deleteGlossaryEntry(i) {
+  const e = _glVisible[i];
+  if (!e) return;
+  openConfirmModal(t('glossary_delete_confirm', e.term), async () => {
+    try { _setGlossary(await pywebview.api.delete_glossary_entry(e.term, e.project || null)); }
+    catch (err) { showToast(String(err)); }
+  }, { title: t('glossary_delete_title'), okLabel: t('btn_delete') });
+}
+
+async function resolveGlossarySuggestion(i, action) {
+  const s = (_glossary.suggestions || [])[i];
+  if (!s) return;
+  try {
+    const res = await pywebview.api.resolve_glossary_suggestion(
+      s.term, action, action === 'approve' ? { project: _glScope || null } : null);
+    _setGlossary(res);
+    if (action === 'approve') showToast(t('glossary_saved'));
+  } catch (e) { showToast(String(e)); }
 }

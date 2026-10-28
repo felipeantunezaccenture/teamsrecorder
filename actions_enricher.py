@@ -385,6 +385,8 @@ def detect_projects_for_all_meetings() -> dict:
 
 def _save_json(minutes_path: Path, actions, enriched_map):
     import re as _re
+    from actions_parser import normalize_assignee
+    from config import ME_NAME
     stem = minutes_path.stem
     m_date = _re.match(r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})', stem)
     created_at = f"{m_date.group(1)}-{m_date.group(2)}-{m_date.group(3)}" if m_date else datetime.now(timezone.utc).date().isoformat()
@@ -404,7 +406,8 @@ def _save_json(minutes_path: Path, actions, enriched_map):
             'project_path':   None,
             'prompt_enriched': enriched.get('prompt', a.prompt),
             'enriched_ok':    bool(enriched),
-            'assignee':       a.assignee if a.assignee is not None else enriched.get('assignee'),
+            'assignee':       normalize_assignee(
+                a.assignee if a.assignee is not None else enriched.get('assignee'), ME_NAME),
             'deadline':       a.deadline,
             'created_at':     created_at,
             'claude_executable': claude_executable,

@@ -181,6 +181,97 @@ def test_un_destinatario_ilegible_no_descarta_a_los_demas(fake_outlook):
     assert [p['email'] for p in participantes] == ['ines@x.com']
 
 
+# ── Asistentes: regresiones del 20/10/2026 ───────────────────────────────
+
+def _rec(nombre, email, tipo=1, respuesta=0):
+    return type('R', (), {'Name': nombre, 'Address': email, 'Type': tipo,
+                          'MeetingResponseStatus': respuesta})()
+
+
+def test_REGRESION_las_fechas_de_outlook_llevan_zona_horaria(fake_outlook):
+    """pywin32 devuelve Start con tzinfo (+00:00). Restarla de una fecha sin zona
+    lanzaba TypeError, un `except: continue` lo tragaba, y NINGUNA reunión
+    encontró jamás a sus invitados (60 de 60 en noted.log)."""
+    from datetime import timezone
+    fake_outlook.appointments = [
+        CitaFalsa('Comite Semanal', AHORA.replace(tzinfo=timezone.utc),
+                  [('Ines', 'ines@x.com')]),
+    ]
+
+    participantes = os_mod.find_meeting_participants(AHORA, 'Comite Semanal')
+
+    assert [p['email'] for p in participantes] == ['ines@x.com']
+
+
+def test_una_reunion_en_curso_se_empareja_aunque_empezara_hace_horas(fake_outlook):
+    """Entras a las 16:00 a una reunión de 14:00-17:00: la ventana tiene que
+    mirar hacia atrás, y por hora está a distancia 0."""
+    cita = CitaFalsa('Sin Nombre Util', AHORA - timedelta(hours=2), [('A', 'a@x.com')])
+    cita.End = AHORA + timedelta(hours=1)
+    fake_outlook.appointments = [cita]
+
+    assert [p['email'] for p in os_mod.find_meeting_participants(AHORA)] == ['a@x.com']
+
+
+def test_REGRESION_la_que_empieza_ahora_gana_a_la_reunion_anterior_aun_en_curso(fake_outlook):
+    """13:00-14:00 sigue 'en curso' a las 14:00, pero la que se graba es la que
+    EMPIEZA a las 14:00. Con las dos a distancia 0 ganaba la anterior y las
+    minutas salían con los invitados de otra reunión."""
+    anterior = CitaFalsa('Reunion de las 13', AHORA - timedelta(hours=1), [('A', 'a@x.com')])
+    anterior.End = AHORA
+    actual = CitaFalsa('Reunion de las 14', AHORA, [('B', 'b@x.com')])
+    actual.End = AHORA + timedelta(hours=1)
+    fake_outlook.appointments = [anterior, actual]
+
+    assert [p['email'] for p in os_mod.find_meeting_participants(AHORA)] == ['b@x.com']
+
+
+def test_por_hora_no_se_acepta_una_cita_lejana(fake_outlook):
+    """Antes se cogía la 'más cercana' aunque empezase 2 h después, y se le
+    atribuían los invitados de otra reunión."""
+    fake_outlook.appointments = [
+        CitaFalsa('Otra', AHORA + timedelta(hours=2), [('X', 'x@x.com')]),
+    ]
+
+    assert os_mod.find_meeting_participants(AHORA) == []
+
+
+def test_los_eventos_de_todo_el_dia_no_cuentan(fake_outlook):
+    todo_el_dia = CitaFalsa('Vacaciones de Marta', AHORA, [('Marta', 'm@x.com')])
+    todo_el_dia.AllDayEvent = True
+    fake_outlook.appointments = [todo_el_dia]
+
+    assert os_mod.find_meeting_participants(AHORA) == []
+
+
+def test_se_descartan_las_salas_y_se_guarda_rol_y_respuesta(fake_outlook):
+    cita = CitaFalsa('Comite', AHORA)
+    cita.Recipients = [
+        _rec('Maestripieri, Francesca', 'f@x.com', tipo=1, respuesta=3),
+        _rec('Sala Madrid 3', 'sala@x.com', tipo=3, respuesta=3),
+        _rec('Opcional', 'o@x.com', tipo=2, respuesta=5),
+    ]
+    cita.Organizer = 'Maestripieri, Francesca'
+    fake_outlook.appointments = [cita]
+
+    gente = os_mod.find_meeting_participants(AHORA, 'Comite')
+
+    assert [p['name'] for p in gente] == ['Francesca Maestripieri', 'Opcional']
+    assert gente[0]['role'] == 'organizer' and gente[0]['response'] == 'accepted'
+    assert gente[1]['role'] == 'optional' and gente[1]['response'] == 'no response'
+    assert gente[0]['meeting_subject'] == 'Comite'
+
+
+@pytest.mark.parametrize('crudo, limpio', [
+    ('Campos Gamez, Inés', 'Inés Campos Gamez'),
+    ('Ines Mollet', 'Ines Mollet'),
+    ('x@y.com', 'x@y.com'),
+    ('', ''),
+])
+def test_clean_name(crudo, limpio):
+    assert os_mod._clean_name(crudo) == limpio
+
+
 # ── Markdown a HTML de email ─────────────────────────────────────────────
 
 def test_escapar_protege_de_inyeccion():

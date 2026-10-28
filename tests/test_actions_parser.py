@@ -311,3 +311,53 @@ def test_el_assignee_de_claude_no_se_pisa_si_ya_tenia_uno():
     merge_actions(claude, humanas)
 
     assert claude[0].assignee == 'YaAsignado'
+
+
+# ── Normalizacion del responsable ─────────────────────────────────────────
+# El tablero agrupa por la cadena exacta del responsable. Medido sobre las
+# minutas reales: 'Otros', '[Otros]', 'Otros (sin concretar)', 'Participant
+# (Otros)', 'Equipo', 'TBD', 'Por definir'... eran cada uno su propio grupo.
+
+from actions_parser import normalize_assignee
+
+
+@pytest.mark.parametrize('raw', [
+    None, '', '-', '—', 'Otros', '[Otros]', 'Otros (atribución inferida)',
+    'Otros (sin concretar)', 'Participant (Otros)', 'Participant (Otros), name unclear',
+    'Equipo', 'Team', 'TBD', 'Por definir', 'Sin concretar', 'Todos',
+    "Recorder's team (attribution inferred) (Claude)", '- (Claude)',
+    'Presentador/a (Claude)', 'Equipo (sin concretar)',
+])
+def test_las_etiquetas_genericas_no_son_un_responsable(raw):
+    assert normalize_assignee(raw) is None
+
+
+def test_el_marcador_claude_no_crea_otro_grupo():
+    assert normalize_assignee('Ana (Claude)') == 'Ana'
+
+
+def test_se_conserva_el_nombre_dentro_de_una_etiqueta_generica():
+    assert normalize_assignee('Otros (Martin)') == 'Martin'
+
+
+def test_varios_responsables_se_unen_con_barra_sin_duplicar():
+    assert normalize_assignee('Ana / Elisa (Claude)') == 'Ana / Elisa'
+    assert normalize_assignee('Ana y Ana') == 'Ana'
+
+
+def test_las_grafias_del_usuario_convergen_en_la_de_ajustes():
+    for raw in ('Ines', 'Inés', 'Ines Campos', 'Inés (Claude)'):
+        assert normalize_assignee(raw, me_name='Inés') == 'Inés'
+
+
+def test_grabador_se_sustituye_por_el_nombre_real():
+    assert normalize_assignee('Grabador/a', me_name='Inés') == 'Inés'
+    assert normalize_assignee('Grabador/a') is None
+
+
+def test_la_tabla_no_genera_responsable_otros():
+    acciones = parse_table_actions(
+        "## Acciones Pendientes\n\n| Accion | Responsable | Fecha |\n|---|---|---|\n"
+        "| Enviar el correo | Otros (atribución inferida) | Mañana |\n"
+        "| Preparar deck | Ana (Claude) | - |\n")
+    assert [a.assignee for a in acciones] == [None, 'Ana']

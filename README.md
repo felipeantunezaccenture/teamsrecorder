@@ -10,11 +10,25 @@ Daemon de Windows que detecta llamadas de Teams automáticamente, graba el audio
 
 ## Instalación
 
+Haz doble clic en **`scripts\instalar.bat`**. El instalador:
+
+1. Comprueba Python, Node.js y Claude CLI (los instala si faltan)
+2. Crea el entorno virtual `.venv` e instala dependencias
+3. Registra la tarea de arranque automático en el Programador de tareas
+4. Arranca Noted en segundo plano
+
+Si prefieres instalar manualmente:
+
 ```bash
 pip install -r requirements.txt
+powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1
 ```
 
+> **Importante:** El paso `install_task.ps1` es necesario para que Noted arranque solo al iniciar sesión o al despertar el PC. Sin él tendrás que lanzarlo manualmente cada vez.
+
 ## Primera ejecución
+
+Noted arranca automáticamente al final del instalador. En instalaciones manuales:
 
 ```bash
 python main.py

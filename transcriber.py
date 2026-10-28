@@ -12,6 +12,10 @@ log = logging.getLogger(__name__)
 _model = None
 _model_name: str | None = None
 _model_lock = threading.Lock()
+# Una sola inferencia a la vez sobre el modelo compartido. Con la transcripción
+# en vivo, la de una reunión que acaba de terminar y la de la que se está
+# grabando pueden coincidir; faster-whisper no garantiza ser reentrante.
+_infer_lock = threading.RLock()
 
 _LANG_REMAP = {
     # Galician/Basque — speakers write in Spanish
@@ -197,10 +201,23 @@ _TRANSCRIBE_ARGS = dict(
 )
 
 
+def _targs(hotwords: str | None = None, **overrides) -> dict:
+    """Argumentos de transcribe(), con las pistas del glosario si las hay.
+
+    Se usa `hotwords` y no `initial_prompt`: con condition_on_previous_text=False
+    faster-whisper solo aplica initial_prompt a la primera ventana de 30 s,
+    mientras que hotwords se reaplica en todas."""
+    args = dict(_TRANSCRIBE_ARGS)
+    args.update(overrides)
+    if hotwords:
+        args['hotwords'] = hotwords
+    return args
+
+
 def _transcribe_whole(model, audio_path: Path, on_progress=None, on_segment=None,
-                      should_cancel=None):
+                      should_cancel=None, hotwords: str | None = None):
     _check_cancel(should_cancel)
-    segments, info = model.transcribe(str(audio_path), **_TRANSCRIBE_ARGS)
+    segments, info = model.transcribe(str(audio_path), **_targs(hotwords))
     detected = _remap(getattr(info, 'language', None))
     log.info(f"Idioma de la reunión: {detected}")
 
@@ -220,7 +237,8 @@ def _transcribe_whole(model, audio_path: Path, on_progress=None, on_segment=None
 
 
 def _transcribe_chunks(model, audio_path: Path, on_progress=None, on_segment=None,
-                       should_cancel=None, resume_at: float = 0.0, prior_lines=None):
+                       should_cancel=None, resume_at: float = 0.0, prior_lines=None,
+                       hotwords: str | None = None):
     """Igual que _transcribe_whole pero por trozos, para acotar la memoria."""
     import numpy as np
     import soundfile as sf
@@ -244,7 +262,7 @@ def _transcribe_chunks(model, audio_path: Path, on_progress=None, on_segment=Non
             block = f.read(min(step, total - pos), dtype='float32', always_2d=False)
             if not len(block):
                 break
-            segments, cinfo = model.transcribe(np.ascontiguousarray(block), **_TRANSCRIBE_ARGS)
+            segments, cinfo = model.transcribe(np.ascontiguousarray(block), **_targs(hotwords))
             if detected is None:
                 detected = _remap(getattr(cinfo, 'language', None))
                 log.info(f"Idioma de la reunión: {detected}")
@@ -269,7 +287,8 @@ def _transcribe_chunks(model, audio_path: Path, on_progress=None, on_segment=Non
 
 
 def _transcribe_with_speakers(model, audio_path: Path, on_progress=None,
-                              should_cancel=None) -> tuple[str, str]:
+                              should_cancel=None,
+                              hotwords: str | None = None) -> tuple[str, str]:
     """Two-pass speaker-tagged transcription using .mic.wav / .loop.wav companion files.
 
     Mic track  → segments labelled [Tú]
@@ -282,7 +301,7 @@ def _transcribe_with_speakers(model, audio_path: Path, on_progress=None,
     loop_path = audio_path.with_suffix('.loop.wav')
 
     log.info("Diarizando: transcribiendo track de micrófono...")
-    mic_segs_raw, mic_info = model.transcribe(str(mic_path), **_TRANSCRIBE_ARGS)
+    mic_segs_raw, mic_info = model.transcribe(str(mic_path), **_targs(hotwords))
     detected = _remap(getattr(mic_info, 'language', None))
     log.info(f"Idioma detectado (diarización): {detected}")
     duration = getattr(mic_info, 'duration', None)
@@ -299,8 +318,7 @@ def _transcribe_with_speakers(model, audio_path: Path, on_progress=None,
             on_progress(min(int(seg.end / duration * 50), 50))
 
     log.info("Diarizando: transcribiendo track de Teams (otros)...")
-    loop_args = dict(_TRANSCRIBE_ARGS)
-    loop_args['language'] = detected
+    loop_args = _targs(hotwords, language=detected)
     loop_args.pop('language_detection_segments', None)
     loop_segs_raw, _ = model.transcribe(str(loop_path), **loop_args)
     loop_segments: list[tuple[float, str, str]] = []
@@ -323,7 +341,8 @@ def _transcribe_with_speakers(model, audio_path: Path, on_progress=None,
 
 
 def _transcribe_local(audio_path: Path, on_progress=None, on_segment=None,
-                      should_cancel=None, resume_from: Path | None = None) -> tuple[str, str]:
+                      should_cancel=None, resume_from: Path | None = None,
+                      hotwords: str | None = None) -> tuple[str, str]:
     """Recorre el plan de fallback hasta que uno funcione.
 
     Antes, cualquier fallo saltaba directamente a la API de OpenAI y, sin
@@ -355,7 +374,8 @@ def _transcribe_local(audio_path: Path, on_progress=None, on_segment=None,
             if use_speakers and not chunked:
                 return _transcribe_with_speakers(model, audio_path,
                                                  on_progress=on_progress,
-                                                 should_cancel=should_cancel)
+                                                 should_cancel=should_cancel,
+                                                 hotwords=hotwords)
             if use_speakers and chunked:
                 mic_path.unlink(missing_ok=True)
                 loop_path.unlink(missing_ok=True)
@@ -364,9 +384,10 @@ def _transcribe_local(audio_path: Path, on_progress=None, on_segment=None,
                 return _transcribe_chunks(
                     model, audio_path, on_progress=on_progress, on_segment=on_segment,
                     should_cancel=should_cancel, resume_at=resume_at,
-                    prior_lines=prior_lines)
+                    prior_lines=prior_lines, hotwords=hotwords)
             return _transcribe_whole(model, audio_path, on_progress=on_progress,
-                                     on_segment=on_segment, should_cancel=should_cancel)
+                                     on_segment=on_segment, should_cancel=should_cancel,
+                                     hotwords=hotwords)
         except TranscriptionCancelled:
             raise
         except Exception as e:
@@ -377,6 +398,41 @@ def _transcribe_local(audio_path: Path, on_progress=None, on_segment=None,
             _release_model()
 
     raise last_exc if last_exc else RuntimeError("transcripción local sin intentos")
+
+
+def _glossary_context(audio_path: Path) -> dict:
+    """Invitados + glosario de esta grabación. El glosario es un extra: si algo
+    falla, se transcribe como siempre."""
+    try:
+        import glossary
+        return glossary.recording_context(audio_path)
+    except Exception as e:
+        log.warning(f"Glosario no disponible: {e}")
+        return {'hotwords': '', 'entries': [], 'project_id': None}
+
+
+def _correct_with_glossary(text: str, ctx: dict) -> str:
+    try:
+        import glossary
+        fixed = glossary.apply_corrections(text, ctx['entries'])
+        if fixed != text:
+            log.info("Glosario: transcript corregido")
+        return fixed
+    except Exception as e:
+        log.warning(f"Correcciones de glosario no aplicadas: {e}")
+        return text
+
+
+def _finish_live(audio_path: Path, should_cancel=None) -> tuple[str, str] | None:
+    """Transcripción hecha durante la grabación, o None para transcribir todo."""
+    try:
+        import live_transcriber
+        return live_transcriber.finish_for(audio_path, should_cancel=should_cancel)
+    except TranscriptionCancelled:
+        raise
+    except Exception as e:
+        log.warning(f"Transcripción en vivo no disponible: {e}")
+        return None
 
 
 def _transcribe_openai(audio_path: Path) -> tuple[str, str]:
@@ -417,9 +473,21 @@ def transcribe(
     def _run():
         try:
             log.info(f"Transcribiendo {audio_path.name}...")
-            text, lang = _transcribe_local(audio_path, on_progress=on_progress,
-                                           on_segment=on_segment, should_cancel=should_cancel,
-                                           resume_from=resume_from)
+            # Si se transcribió en vivo durante la grabación, solo queda la
+            # cola. Va ANTES de tomar _infer_lock: finish_for espera al hilo en
+            # vivo, que necesita ese lock para acabar su última ventana.
+            live = _finish_live(audio_path, should_cancel)
+            glossary_ctx = _glossary_context(audio_path)
+            if live is not None:
+                text, lang = live
+            else:
+                with _infer_lock:
+                    text, lang = _transcribe_local(audio_path, on_progress=on_progress,
+                                                   on_segment=on_segment,
+                                                   should_cancel=should_cancel,
+                                                   resume_from=resume_from,
+                                                   hotwords=glossary_ctx['hotwords'])
+            text = _correct_with_glossary(text, glossary_ctx)
         except TranscriptionCancelled:
             # Descartada a proposito: no reintentar ni llamar a la API de pago.
             log.info(f"Transcripción cancelada: {audio_path.name}")

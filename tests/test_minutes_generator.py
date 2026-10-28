@@ -250,3 +250,215 @@ def test_los_backticks_del_prompt_de_sistema_se_convierten(cli_falso, tr_dirs):
     mg._generate_via_cli('t', tr_dirs / 'x.wav')
     prompt = cli_falso['llamadas'][0]['prompt']
     assert '```' not in prompt.split('## ')[0]
+
+
+# ── Nombre de quien graba ────────────────────────────────────────────────
+
+def test_el_nombre_del_usuario_llega_al_prompt(cli_falso, tr_dirs, monkeypatch):
+    """Regresion: minutes_generator usaba PROJECT_DIR sin importarlo. El
+    NameError lo tragaba un `except Exception` y me_name quedaba SIEMPRE
+    vacio: el prompt hablaba de [Grabador/a] mientras el transcript traia
+    [Ines], y los asistentes y responsables salian como 'Grabador/a'/'Otros'."""
+    (tr_dirs / 'settings.json').write_text('{"user_name": "Ines"}', encoding='utf-8')
+    monkeypatch.setattr(mg, 'PROJECT_DIR', tr_dirs)
+
+    mg._generate_via_cli('[Ines]: hola\n[Otros]: buenas', tr_dirs / 'x.wav', language='es')
+
+    prompt = cli_falso['llamadas'][0]['prompt']
+    assert 'La persona que grabó esta reunión es **Ines**' in prompt
+    assert '[Grabador/a]' not in prompt
+
+
+def test_project_dir_esta_importado_en_el_generador():
+    assert hasattr(mg, 'PROJECT_DIR')
+
+
+@pytest.mark.parametrize('idioma', ['es', 'en', 'ca'])
+def test_el_prompt_prohibe_otros_como_responsable(idioma):
+    """Cada variante ('Otros', 'Otros (atribucion inferida)', 'Equipo'...)
+    se convertia en una columna distinta del tablero."""
+    assert 'REGLA DE RESPONSABLE' in mg._get_system_prompt(idioma)
+
+
+# ── Calidad: el modelo recibe intervenciones, no un chat entrecortado ─────
+
+def test_las_lineas_seguidas_del_mismo_hablante_se_unen():
+    t = ('[00:01] [Otros]: Is this rolling\n'
+         '[00:04] [Otros]: or just here today,\n'
+         "[00:07] [Otros]: it's not rolling 12 months, right?")
+    assert mg.compact_transcript(t) == (
+        "[00:01] [Otros]: Is this rolling or just here today, it's not rolling 12 months, right?")
+
+
+def test_cambiar_de_hablante_abre_otra_intervencion():
+    t = '[00:01] [Ines]: hola\n[00:03] [Otros]: buenas\n[00:05] [Ines]: vamos'
+    assert mg.compact_transcript(t).splitlines() == [
+        '[00:01] [Ines]: hola', '[00:03] [Otros]: buenas', '[00:05] [Ines]: vamos']
+
+
+def test_un_silencio_largo_abre_otra_intervencion():
+    t = '[00:01] [Otros]: uno\n[00:30] [Otros]: dos'
+    assert len(mg.compact_transcript(t).splitlines()) == 2
+
+
+def test_un_transcript_sin_etiquetas_tambien_se_compacta():
+    t = '[00:01] hola\n[00:03] que tal\n[01:00] otra cosa'
+    assert mg.compact_transcript(t).splitlines() == ['[00:01] hola que tal', '[01:00] otra cosa']
+
+
+def test_las_lineas_sin_marca_de_tiempo_se_respetan_y_no_se_unen():
+    t = '[00:01] [Ines]: hola\n[TRANSCRIPCIÓN IMPORTADA]\n[00:03] [Ines]: adios'
+    assert len(mg.compact_transcript(t).splitlines()) == 3
+
+
+def test_compactar_no_pierde_texto():
+    t = '\n'.join(f'[00:{i:02d}] [Otros]: palabra{i}' for i in range(0, 50, 2))
+    out = mg.compact_transcript(t)
+    assert all(f'palabra{i}' in out for i in range(0, 50, 2))
+
+
+def test_compactar_vacio_no_lanza():
+    assert mg.compact_transcript('') == ''
+
+
+def test_el_prompt_lleva_el_transcript_compactado(tr_dirs):
+    t = '\n'.join(f'[00:{i:02d}] [Otros]: frase{i}' for i in range(0, 20, 2))
+    p = mg._build_prompt(t, tr_dirs / 'x.wav', language='es', me_name='Ines')
+    assert p.count('[Otros]:') < 10 + 3      # una intervención, no diez líneas
+
+
+@pytest.mark.parametrize('idioma', ['es', 'en', 'ca'])
+def test_el_prompt_de_sistema_pide_sintetizar_por_tema(idioma):
+    assert 'CALIDAD DE LA MINUTA' in mg._get_system_prompt(idioma)
+
+
+@pytest.mark.parametrize('idioma, frase', [
+    ('es', "nunca escribas 'Otros dijo'"),
+    ('en', "never write 'Otros said'"),
+])
+def test_el_override_prohibe_narrar_por_hablante(tr_dirs, idioma, frase):
+    p = mg._build_prompt('[Ines]: hola\n[Otros]: buenas', tr_dirs / 'x.wav',
+                         language=idioma, me_name='Ines')
+    assert frase in p
+
+
+# ── Asistentes: invitación + transcript ──────────────────────────────────
+
+INVITADOS = [
+    {'name': 'Francesca Maestripieri', 'role': 'organizer', 'response': 'accepted',
+     'meeting_subject': 'IBP Demand Review'},
+    {'name': 'Andras Kovacs', 'role': 'required', 'response': 'no response'},
+    {'name': 'Sharon Lee', 'role': 'required', 'response': 'declined'},
+    {'name': 'Inés Campos', 'role': 'required', 'response': 'accepted'},
+]
+TRANSCRIPT = ('[00:01] [Inés]: hola a todos\n'
+              '[00:09] [Otros]: gracias, soy Francesca, empezamos. Andras, ¿puedes compartir?')
+
+
+def test_la_nota_de_asistentes_marca_quien_se_nombra_en_el_transcript():
+    nota = mg._participants_note(INVITADOS, TRANSCRIPT, 'Inés', 'es')
+
+    assert "IBP Demand Review" in nota
+    assert 'Francesca Maestripieri [organizer; accepted] — nombrado en el transcript: solo nombre o apellido' in nota
+    assert 'Andras Kovacs [required; no response] — nombrado en el transcript: solo nombre o apellido' in nota
+    assert 'Sharon Lee [required; declined] — nombrado en el transcript: no' in nota
+
+
+def test_quien_graba_se_reconoce_sin_depender_del_transcript():
+    nota = mg._participants_note(INVITADOS, 'sin nombres aqui', 'Inés', 'es')
+    assert 'Inés Campos [required; accepted] — es quien graba' in nota
+
+
+def test_el_nombre_de_quien_graba_en_la_etiqueta_no_cuenta_como_dicho():
+    """'[Sharon]:' como etiqueta de hablante no es que alguien la nombre."""
+    spoken = mg._spoken_text('[00:01] [Sharon]: hola')
+    assert 'sharon' not in spoken
+
+
+@pytest.mark.parametrize('nombre, texto, esperado', [
+    ('Andras Kovacs', 'andras kovacs presenta', 'full'),
+    ('Andras Kovacs', 'andras presenta', 'partial'),
+    ('Andras Kovacs', 'nadie habla de el', 'none'),
+    ('Inés Campos', 'ines campos y nadie mas', 'full'),          # sin acentos
+    ('Francesca Maestripieri', 'francesca y mestripieri', 'full'),  # Whisper escribe mal
+    ('Ana', 'hablamos de banana', 'none'),                          # no es subcadena
+])
+def test_evidence(nombre, texto, esperado):
+    palabras = set(__import__('re').findall(r'[a-z]{5,}', texto))
+    assert mg._evidence(nombre, texto, palabras) == esperado
+
+
+def test_las_reglas_dejan_fuera_a_quien_rechazo_y_no_aparece():
+    nota = mg._participants_note(INVITADOS, TRANSCRIPT, 'Inés', 'es')
+    assert 'rechazó' in nota and 'Invitados sin confirmar asistencia' in nota
+
+
+def test_el_prompt_incluye_la_invitacion_y_no_contradice_la_regla(tr_dirs):
+    p = mg._build_prompt(TRANSCRIPT, tr_dirs / 'x.wav', language='es', me_name='Inés',
+                         participants=INVITADOS)
+    assert 'Reglas de asistentes' in p
+    assert 'Maestripieri' in p
+
+
+def test_sin_invitados_el_prompt_no_cambia(tr_dirs):
+    p = mg._build_prompt(TRANSCRIPT, tr_dirs / 'x.wav', language='es', me_name='Inés')
+    assert 'Reglas de asistentes' not in p
+
+
+def test_el_override_de_diarizacion_prohibe_otros_como_responsable(tr_dirs):
+    p = mg._build_prompt('[Ines]: hola\n[Otros]: buenas', tr_dirs / 'x.wav',
+                         language='es', me_name='Ines')
+    assert "'Otros' NO es un asistente" in p
+
+
+# ── run_claude y regenerate_actions_section ──────────────────────────────
+
+def test_run_claude_devuelve_la_salida_sin_espacios(cli_falso):
+    cli_falso['proc'].salida = '  hola  \n'
+    assert mg.run_claude('un prompt', timeout=12) == 'hola'
+    assert cli_falso['llamadas'][0] == {'prompt': 'un prompt', 'timeout': 12}
+
+
+def test_run_claude_sin_cli_devuelve_none(monkeypatch):
+    monkeypatch.setattr(mg, '_get_claude_bin', lambda: None)
+    assert mg.run_claude('x') is None
+
+
+def test_run_claude_con_error_del_cli_devuelve_none(cli_falso):
+    cli_falso['proc'].returncode = 1
+    cli_falso['proc'].err = 'boom'
+    assert mg.run_claude('x') is None
+
+
+def test_run_claude_con_salida_vacia_devuelve_none(cli_falso):
+    cli_falso['proc'].salida = '   '
+    assert mg.run_claude('x') is None
+
+
+def test_run_claude_con_timeout_mata_el_proceso(cli_falso):
+    import subprocess
+
+    def lento(input=None, timeout=None):
+        if timeout:
+            raise subprocess.TimeoutExpired('claude', timeout)
+        return '', ''
+    cli_falso['proc'].communicate = lento
+    assert mg.run_claude('x', timeout=1) is None
+    assert cli_falso['proc'].killed
+
+
+def test_regenerar_acciones_anade_la_cabecera_si_falta(cli_falso):
+    cli_falso['proc'].salida = '| Accion | Responsable |'
+    out = mg.regenerate_actions_section('t', '', 'cambia algo', language='es')
+    assert out.startswith('## Acciones Pendientes\n\n| Accion')
+    assert cli_falso['llamadas'][0]['timeout'] == 900
+
+
+def test_regenerar_acciones_respeta_la_cabecera_que_trae(cli_falso):
+    cli_falso['proc'].salida = '## Pending Actions\n\n| a |'
+    assert mg.regenerate_actions_section('t', '', 'x', language='en').startswith('## Pending Actions')
+
+
+def test_regenerar_acciones_sin_respuesta_devuelve_none(cli_falso):
+    cli_falso['proc'].returncode = 2
+    assert mg.regenerate_actions_section('t', '', 'x') is None

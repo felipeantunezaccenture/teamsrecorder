@@ -12,7 +12,7 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
-from config import SAMPLE_RATE, PROJECT_DIR
+from config import SAMPLE_RATE, PROJECT_DIR, LIVE_TRANSCRIPTION
 
 _RECORDING_SENTINEL = PROJECT_DIR / '.recording_active'
 
@@ -45,6 +45,15 @@ _BLOCK = 1 << 18
 # voces de los demas.
 _LOOPBACK_ATTEMPTS = 3
 _LOOPBACK_RETRY_WAIT = 1.5
+# Cuanto se espera a que el worker abra el loopback y mande su cabecera. Al
+# entrar en una llamada Teams reconfigura los dispositivos y abrirlos puede
+# tardar mas de 5 s; con ese limite el worker (vivo, solo lento) se mataba y el
+# log decia "termino con codigo 1", que es el codigo de terminate().
+_LOOPBACK_HEADER_TIMEOUT = 15.0
+# Pasados los intentos iniciales se sigue reintentando cada tanto mientras dure
+# la grabacion: es mejor tener las voces de los demas desde el minuto 5 que no
+# tenerlas nunca.
+_LOOPBACK_LATE_WAIT = 10.0
 
 # Corte del paso-alto aplicado al micrófono. El micro introduce un offset DC y
 # rumble por debajo de esta frecuencia que llega a dominar el espectro; como
@@ -98,6 +107,8 @@ class AudioRecorder:
         # Instante en que arrancó el micrófono, para compensar el retraso con
         # que se abre el loopback en segundo plano.
         self._mic_t0: float | None = None
+        # Transcripción en vivo de la grabación en curso (live_transcriber.py).
+        self._live = None
 
         # True si se está capturando el audio del sistema. Cuando es False la
         # grabación solo contiene tu micrófono, y con auriculares eso significa
@@ -129,6 +140,7 @@ class AudioRecorder:
             self._recording = False
             self._close_inputs()
             self._close_writers()
+            self._release_live(discard=True)
             self._save_event.set()
             raise
 
@@ -181,12 +193,23 @@ class AudioRecorder:
         _write_sentinel()
         log.info(f"Recording started → {output_path}")
 
+        if LIVE_TRANSCRIPTION:
+            try:
+                from live_transcriber import start_for
+                self._live = start_for(output_path, self._tmp_mic, self._tmp_loop)
+            except Exception as e:
+                # Es un extra: sin él la reunión se transcribe al terminar.
+                self._live = None
+                log.warning(f"Transcripción en vivo no disponible: {e}")
+
     def stop(self) -> Path | None:
         if not self._recording:
             return None
         self._recording = False
         self._close_inputs()
         self._close_writers()
+        if self._live:
+            self._live.stop()
 
         t = threading.Thread(
             target=self._process_and_save, daemon=True, name='AudioProcessor',
@@ -201,10 +224,22 @@ class AudioRecorder:
         self._recording = False
         self._close_inputs()
         self._close_writers()
+        self._release_live(discard=True)
         self._discard_temp()
         _remove_sentinel()
         self._save_event.set()
         log.info("Recording cancelled — audio discarded")
+
+    def _release_live(self, discard: bool = False):
+        """Suelta el hilo en vivo antes de borrar los .part (ver _io_lock)."""
+        live, self._live = self._live, None
+        if not live:
+            return
+        live.stop()
+        live.quiesce()
+        if discard and self._output_path:
+            from live_transcriber import discard_for
+            discard_for(self._output_path)
 
     def wait_for_save(self, timeout: int = 60) -> bool:
         return self._save_event.wait(timeout=timeout)
@@ -257,12 +292,16 @@ class AudioRecorder:
         de los demás.
         """
         reason = 'no se intentó'
-        for attempt in range(1, _LOOPBACK_ATTEMPTS + 1):
-            if not self._recording:
-                return
+        attempt = 0
+        warned = False
+        while self._recording:
+            attempt += 1
             self._loopback_error = None
             if self._start_wasapi_loopback() or self._start_stereo_mix_loopback():
                 self.loopback_active = True
+                if warned:
+                    log.info(f"Audio del sistema recuperado en el intento {attempt}; "
+                             f"el tramo anterior solo tiene el micrófono")
                 return
             reason = self._loopback_error or 'sin dispositivo loopback disponible'
             if attempt < _LOOPBACK_ATTEMPTS:
@@ -271,17 +310,23 @@ class AudioRecorder:
                     f"{reason} — reintentando en {_LOOPBACK_RETRY_WAIT}s"
                 )
                 time.sleep(_LOOPBACK_RETRY_WAIT)
-
-        log.error(
-            f"SIN audio del sistema tras {_LOOPBACK_ATTEMPTS} intentos ({reason}). "
-            f"La grabación tendrá SOLO tu micrófono: si usas auriculares, no se "
-            f"capturará nada de lo que digan los demás."
-        )
-        if self.on_loopback_unavailable:
-            threading.Thread(
-                target=self.on_loopback_unavailable, args=(reason,),
-                daemon=True, name='LoopbackWarning',
-            ).start()
+                continue
+            if not warned:
+                warned = True
+                log.error(
+                    f"SIN audio del sistema tras {_LOOPBACK_ATTEMPTS} intentos ({reason}). "
+                    f"La grabación tendrá SOLO tu micrófono hasta que se recupere: si usas "
+                    f"auriculares, no se capturará nada de lo que digan los demás. "
+                    f"Se sigue reintentando cada {_LOOPBACK_LATE_WAIT:.0f}s."
+                )
+                if self.on_loopback_unavailable:
+                    threading.Thread(
+                        target=self.on_loopback_unavailable, args=(reason,),
+                        daemon=True, name='LoopbackWarning',
+                    ).start()
+            else:
+                log.warning(f"Loopback sigue sin arrancar (intento {attempt}): {reason}")
+            time.sleep(_LOOPBACK_LATE_WAIT)
 
     def _start_wasapi_loopback(self) -> bool:
         try:
@@ -304,7 +349,7 @@ class AudioRecorder:
                 header_result[0] = proc.stdout.read(8)
             t = threading.Thread(target=_read_header, daemon=True)
             t.start()
-            t.join(timeout=5.0)
+            t.join(timeout=_LOOPBACK_HEADER_TIMEOUT)
             header = header_result[0]
             if not header or len(header) < 8:
                 self._loopback_error = self._drain_worker_error(proc)
@@ -331,6 +376,9 @@ class AudioRecorder:
     @staticmethod
     def _drain_worker_error(proc) -> str:
         """Termina el worker y devuelve lo que dejó dicho en stderr."""
+        # Hay que mirarlo ANTES de terminate(): despues el codigo de salida es
+        # siempre 1 y no distingue un fallo del worker de uno matado por lentitud.
+        code = proc.poll()
         try:
             proc.terminate()
         except Exception:
@@ -340,7 +388,7 @@ class AudioRecorder:
         except Exception:
             # terminate() no siempre basta si el worker está bloqueado dentro de
             # PortAudio; sin este kill quedaría un proceso huérfano por cada
-            # intento fallido, y son 3 por grabación.
+            # intento fallido.
             try:
                 proc.kill()
                 proc.communicate(timeout=2)
@@ -348,7 +396,12 @@ class AudioRecorder:
                 pass
             return 'el worker de loopback no respondió'
         msg = (err or b'').decode('utf-8', 'replace').strip()
-        return msg or f"el worker de loopback terminó con código {proc.returncode}"
+        if msg:
+            return msg
+        if code is None:
+            return (f"el worker no abrió el loopback en {_LOOPBACK_HEADER_TIMEOUT:.0f}s "
+                    f"(dispositivo de audio ocupado o lento)")
+        return f"el worker de loopback terminó con código {code}"
 
     def _open_loop_writer(self):
         """El temporal del loopback se guarda ya en mono y al sample rate del
@@ -652,6 +705,7 @@ class AudioRecorder:
         except Exception as e:
             log.error(f"Error guardando WAV: {e}", exc_info=True)
         finally:
+            self._release_live()
             self._discard_temp()
             _remove_sentinel()
             self._save_event.set()

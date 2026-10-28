@@ -660,7 +660,7 @@ class TrayApp:
                 log.warning(f"mover parte extra {extra.name}: {e}")
             for aux in (extra.with_name(extra.stem + '_transcript.txt'),
                         extra.with_suffix('.lang'), extra.with_suffix('.partial'),
-                        extra.with_suffix('.context')):
+                        extra.with_suffix('.context'), extra.with_suffix('.live')):
                 try:
                     if aux.exists():
                         aux.unlink()
@@ -790,9 +790,16 @@ class TrayApp:
                 log.warning(f"project_exporter on_done: {e}")
             try:
                 from app_window import open_app
-                open_app(str(minutes_path))
+                open_app(str(minutes_path), focus=False)
             except Exception as e:
                 log.warning(f"Error abriendo app: {e}")
+            # Al final y en su propio hilo: es otra llamada a Claude y no debe
+            # solaparse con el enriquecimiento ni retrasar el aviso de "listo".
+            threading.Thread(
+                target=self._suggest_glossary_terms,
+                args=(_transcript_for_export, content, participants, minutes_path.stem),
+                daemon=True, name='GlossarySuggest',
+            ).start()
 
         enrich_and_save(minutes_path, PROJECT_DIR.parent, on_done=on_done)
 
@@ -808,6 +815,21 @@ class TrayApp:
 
         threading.Thread(target=_brain_update, daemon=True, name='BrainDream').start()
 
+    def _suggest_glossary_terms(self, transcript: str, minutes_text: str,
+                                participants: list, stem: str) -> None:
+        """Deja como sugerencias pendientes las correcciones de nombres y siglas
+        que Claude detecta en esta reunión. Nunca entran solas en el glosario:
+        las aprueba el usuario desde Settings. Es un extra; si falla, se loguea."""
+        try:
+            import glossary
+            n = glossary.suggest_from_meeting(
+                transcript, minutes_text,
+                [p['name'] for p in participants if p.get('name')], stem)
+            if n:
+                log.info(f"Glosario: {n} sugerencia(s) nueva(s) de {stem}")
+        except Exception as e:
+            log.warning(f"Glosario: sin sugerencias de {stem}: {e}")
+
     def _move_to_processed(self, wav_path: Path, transcript_path: Path):
         dest = RECORDINGS_DIR / 'processed'
         dest.mkdir(exist_ok=True)
@@ -821,7 +843,7 @@ class TrayApp:
                 transcript_path.unlink()
             except Exception as e:
                 log.warning(f"No se pudo eliminar {transcript_path.name}: {e}")
-        for suffix in ('.lang', '.partial', '.context'):
+        for suffix in ('.lang', '.partial', '.context', '.live'):
             aux = wav_path.with_suffix(suffix)
             if aux.exists():
                 try:
@@ -833,6 +855,11 @@ class TrayApp:
         time.sleep(3)
         pending = []
         for wav in RECORDINGS_DIR.glob('*.wav'):
+            # <grab>.mic.wav / <grab>.loop.wav son las pistas para diarizar, no
+            # grabaciones: encolarlas triplicaba el trabajo y generaba minutas
+            # de una sola pista.
+            if wav.stem.endswith(('.mic', '.loop')):
+                continue
             stem_ts = wav.stem[:16]
             ts_compact = stem_ts[:4] + stem_ts[5:7] + stem_ts[8:10] + '_' + stem_ts[11:13] + stem_ts[14:16]
             has_minutes = any(MINUTES_DIR.glob(f"{ts_compact}_*.md"))
@@ -840,8 +867,9 @@ class TrayApp:
                 pending.append(wav)
 
         if pending:
-            s = _STR.get(get_ui_language(), _STR['en'])
-            self._notify('Noted', s['recordings_pending'].format(n=len(pending)))
+            # Sin toast: reaparecia en cada reinicio del daemon aunque las
+            # grabaciones se reanudan solas y el icono ya muestra el progreso.
+            log.info(f"{len(pending)} grabacion(es) pendiente(s) de procesar: se reanudan")
             for wav in pending:
                 self._pipeline_queue.put(wav)
 

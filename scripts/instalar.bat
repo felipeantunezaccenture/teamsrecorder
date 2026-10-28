@@ -144,19 +144,21 @@ echo ========================================
 echo   Noted instalado correctamente.
 echo ========================================
 echo.
-echo   SIGUIENTE PASO OBLIGATORIO - autenticate en Claude Code:
+echo   Autenticando Claude CLI (se abrira el navegador)...
+echo   Vincula tu cuenta de Anthropic para que las minutas funcionen.
 echo.
-echo       claude login
+claude login
+if errorlevel 1 (
+    echo.
+    echo   AVISO: La autenticacion no se completo. Puedes hacerlo mas tarde
+    echo   abriendo un terminal y ejecutando:  claude login
+    echo.
+)
 echo.
-echo   Esto abre el navegador para vincular tu cuenta de Claude.
-echo   Sin este paso las minutas no se generaran.
-echo.
-pause
 
 rem -------------------------------------------------------
-rem Arrancar Noted ahora (sin esperar al proximo login)
+rem Arrancar Noted ahora
 rem -------------------------------------------------------
-echo.
 echo   Arrancando Noted en segundo plano...
 start "" powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "%REPO%\watchdog.ps1"
 echo   Listo. Busca el icono de Noted en la bandeja del sistema

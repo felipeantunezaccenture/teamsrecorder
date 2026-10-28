@@ -48,6 +48,7 @@ _WEB_DIR = Path(__file__).parent / 'web'
 # Instancia global de la ventana (singleton)
 
 _window = None
+_single_mutex = None   # handle del mutex que impide una segunda ventana
 
 _window_lock = threading.Lock()
 
@@ -2030,6 +2031,51 @@ class AppAPI:
             return False
 
 
+
+    # ── Glosario (Settings) ────────────────────────────────────────────────
+    # Todos los métodos devuelven el estado completo, para que el front se
+    # repinte desde ahí sin tener que mantener su propia copia.
+
+    def _glossary_payload(self) -> dict:
+        import glossary
+        data = glossary.load()
+        return {
+            'entries': data['entries'],
+            'suggestions': data['suggestions'],
+            'pending': len(data['suggestions']),
+            'projects': [{'id': p.get('id'), 'name': p.get('name') or p.get('id')}
+                         for p in self.get_projects() if p.get('id')],
+        }
+
+    def get_glossary(self) -> dict:
+        return self._glossary_payload()
+
+    def save_glossary_entry(self, entry: dict, original: dict | None = None) -> dict:
+        """Crea o edita una entrada. `original` ({term, project}) es la que se
+        está editando, por si cambia el término o el ámbito."""
+        import glossary
+        try:
+            glossary.upsert_entry(entry, original)
+        except ValueError:
+            return {'error': 'term'}
+        return self._glossary_payload()
+
+    def delete_glossary_entry(self, term: str, project: str | None = None) -> dict:
+        import glossary
+        glossary.delete_entry(term, project)
+        return self._glossary_payload()
+
+    def resolve_glossary_suggestion(self, term: str, action: str, edits: dict | None = None) -> dict:
+        """action: 'approve' (entra en el glosario, con `edits` opcionales) o
+        'dismiss' (se descarta y no vuelve a proponerse)."""
+        import glossary
+        if action == 'approve':
+            glossary.approve_suggestion(term, edits)
+        elif action == 'dismiss':
+            glossary.dismiss_suggestion(term)
+        else:
+            return {'error': 'action'}
+        return self._glossary_payload()
 
     def get_settings(self) -> dict:
 
@@ -4068,7 +4114,7 @@ def _parse_stem(stem: str) -> dict:
 
 
 
-def open_app(initial_path: str = None):
+def open_app(initial_path: str = None, focus: bool = True):
 
     """
 
@@ -4098,7 +4144,7 @@ def open_app(initial_path: str = None):
 
                 nav_file.write_text(initial_path or '', encoding='utf-8')
 
-                if os.name == 'nt':
+                if focus and os.name == 'nt':
 
                     try:
 
@@ -4191,7 +4237,31 @@ def _set_taskbar_icon(title: str, icon_path: str) -> None:
 
 def _run_window(initial_path: str = None):
     """Punto de entrada cuando se ejecuta como proceso independiente."""
-    global _window
+    global _window, _single_mutex
+
+    # Exclusion atomica: el .pid solo se escribe tras cargar webview, y dos
+    # open_app() seguidos (dos minutas que terminan a la vez, un clic en la
+    # bandeja) lanzaban dos ventanas antes de que la primera lo escribiera.
+    if os.name == 'nt':
+        try:
+            import ctypes
+            import sys
+            _k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            _k32.CreateMutexW.restype = ctypes.c_void_p
+            _single_mutex = _k32.CreateMutexW(None, False, r'Local\Noted.AppWindow')
+            if ctypes.get_last_error() == 183:   # ERROR_ALREADY_EXISTS
+                if initial_path:
+                    (PROJECT_DIR / '.app_navigate.txt').write_text(initial_path, encoding='utf-8')
+                hwnd = ctypes.windll.user32.FindWindowW(None, 'Noted')
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+                sys.exit(0)
+        except SystemExit:
+            raise
+        except Exception:
+            pass
+
     import webview
     _cleanup_old_tmp_dirs()
 

@@ -31,6 +31,13 @@ CHANNELS    = 1
 WHISPER_MODEL    = _settings.get('whisper_model') or os.getenv('WHISPER_MODEL', 'medium')
 WHISPER_LANGUAGE = os.getenv('WHISPER_LANGUAGE', '') or None
 
+# Transcribir mientras se graba (live_transcriber.py). Gasta CPU durante la
+# llamada; settings.json "live_transcription" o LIVE_TRANSCRIPTION=0 lo apagan.
+_live = _settings.get('live_transcription')
+if _live is None:
+    _live = os.getenv('LIVE_TRANSCRIPTION', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+LIVE_TRANSCRIPTION = bool(_live)
+
 ME_NAME = _settings.get('user_name', '').strip()
 
 CLAUDE_MODEL      = _settings.get('claude_model') or os.getenv('CLAUDE_MODEL', 'claude-sonnet-4-6')

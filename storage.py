@@ -59,7 +59,7 @@ def list_recordings(limit: int = 10) -> list[Path]:
 def cleanup_old_recordings(days: int = 10):
     cutoff = datetime.now() - timedelta(days=days)
     audio_patterns = ('*.wav', '*.mp3')
-    aux_patterns   = ('*.lang', '*.partial', '*.context')
+    aux_patterns   = ('*.lang', '*.partial', '*.context', '*.live')
     for d in (RECORDINGS_DIR, RECORDINGS_DIR / 'processed'):
         for pattern in audio_patterns + aux_patterns:
             for f in d.glob(pattern):

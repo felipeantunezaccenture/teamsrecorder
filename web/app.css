@@ -1426,7 +1426,8 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.35);
-  display: flex; align-items: center; justify-content: center; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 250;   /* por encima de los drawers (200), que si no tapan el modal de confirmación */
 }
 .modal-overlay.hidden { display: none; }
 .modal-box {
@@ -2109,3 +2110,37 @@ html, body { height: 100%; overflow: hidden; font-family: 'Inter', 'Segoe UI', s
   background: var(--accent); color: #fff; cursor: pointer; font-size: 13px;
 }
 .brain-note-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Glosario ── */
+.nav-dot {
+  position: absolute; top: 9px; right: 16px; width: 9px; height: 9px;
+  border-radius: 50%; background: #f59e0b;
+  box-shadow: 0 0 0 2px var(--sidebar-bg, #1e1b2e);
+}
+.gl-pending { color: #d97706; font-weight: 600; }
+.gl-toolbar { display: flex; align-items: center; gap: 10px; }
+.gl-toolbar .settings-select { flex: 1; min-width: 0; }
+.gl-form {
+  display: flex; flex-direction: column; gap: 12px; padding: 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+}
+.gl-group { margin-top: 14px; }
+.gl-row {
+  display: flex; align-items: flex-start; gap: 10px; padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.gl-main { flex: 1; min-width: 0; }
+.gl-term { font-size: 13px; font-weight: 600; color: var(--text); word-break: break-word; }
+.gl-meta { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.45; word-break: break-word; }
+.gl-meta b { color: var(--text); font-weight: 600; }
+.gl-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.gl-icon-btn {
+  background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+  color: var(--muted); font-size: 13px; padding: 3px 6px; line-height: 1;
+}
+.gl-icon-btn:hover { color: var(--text); background: var(--surface2); border-color: var(--border); }
+.gl-sugg {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 8px; padding: 9px 11px; margin-top: 8px;
+}

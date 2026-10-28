@@ -153,7 +153,21 @@ def test_recupera_una_grabacion_sin_minutas(tray, sin_espera, espia_notificacion
     tray._recover_pending()
 
     assert tray._pipeline_queue.qsize() == 1
-    assert len(espia_notificaciones) == 1
+    # Sin toast: salia en cada reinicio del daemon.
+    assert espia_notificaciones == []
+
+
+def test_no_encola_las_pistas_mic_y_loop_como_si_fueran_grabaciones(tray, sin_espera,
+                                                                    espia_notificaciones,
+                                                                    wav_factory, tr_dirs):
+    """<grab>.mic.wav y <grab>.loop.wav son pistas de diarizacion: encolarlas"""
+    """triplicaba el trabajo y generaba minutas de una sola pista."""
+    for suf in ('.wav', '.mic.wav', '.loop.wav'):
+        wav_factory(ta.RECORDINGS_DIR / f'{STEM}{suf}', seconds=0.1)
+
+    tray._recover_pending()
+
+    assert tray._pipeline_queue.qsize() == 1
 
 
 def test_no_recupera_una_grabacion_que_ya_tiene_minutas(tray, sin_espera,

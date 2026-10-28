@@ -54,7 +54,7 @@ _APP_MODULES = (
     'tray_app', 'app_window', 'tasks_store', 'buckets_store', 'project_context',
     'actions_enricher', 'actions_parser', 'minutes_generator', 'html_exporter',
     'inbox_watcher', 'outlook_sender', 'project_exporter', 'teams_chat',
-    'cli', 'main',
+    'cli', 'main', 'glossary', 'live_transcriber',
 )
 IMPORT_ERRORS: dict = {}
 
@@ -98,6 +98,7 @@ _SEAMS = {
 # Ficheros concretos: (modulos con copia, nombre bajo la raiz temporal)
 _FILE_SEAMS = {
     'TASKS_FILE': (('tasks_store',), 'tasks.json'),
+    'GLOSSARY_FILE': (('glossary',), 'glossary.json'),
     'BUCKETS_FILE': (('buckets_store',), 'buckets.json'),
     '_CANCEL_FILE': (('tray_app',), '.cancelled_jobs.txt'),
     'LOCK_FILE': (('main',), '.lock'),
@@ -111,7 +112,7 @@ _FILE_SEAMS = {
 # .cancelled_jobs.txt se vigila: un test que olvide redirigirlo escribiria una
 # senal de cancelacion real y el daemon descartaria una reunion de verdad.
 _USER_DATA = ('tasks.json', 'buckets.json', 'settings.json', 'projects.json',
-              'pins.json', '.cancelled_jobs.txt')
+              'pins.json', 'glossary.json', '.cancelled_jobs.txt')
 
 
 def _fingerprint() -> dict:
@@ -172,6 +173,13 @@ def tr_dirs(tmp_path, monkeypatch):
             mod = sys.modules.get(mod_name)
             if mod is not None:
                 monkeypatch.setattr(mod, attr, root / filename, raising=False)
+
+    # El nombre del usuario sale de settings.json: sin esto, los tests dependen
+    # de quien los ejecute (normalize_assignee lo usa para unificar grafias).
+    for mod_name in ('config', 'actions_parser'):
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            monkeypatch.setattr(mod, 'ME_NAME', '', raising=False)
 
     # Red de seguridad: toda ruta debe caer DENTRO de la raiz de este test.
     # Se comprueba asi, y no como "fuera del repo", porque --basetemp cuelga de

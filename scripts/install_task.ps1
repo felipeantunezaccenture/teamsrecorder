@@ -35,7 +35,11 @@ if ($wakeClass) {
 
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit ([TimeSpan]::Zero) `
-    -MultipleInstances IgnoreNew
+    -MultipleInstances IgnoreNew `
+    -DontStopIfGoingOnBatteries `
+    -AllowStartIfOnBatteries `
+    -RestartCount 5 `
+    -RestartInterval (New-TimeSpan -Minutes 3)
 
 $principal = New-ScheduledTaskPrincipal `
     -UserId "$env:USERDOMAIN\$env:USERNAME" `
@@ -50,6 +54,27 @@ Register-ScheduledTask `
     -Principal $principal `
     -Force | Out-Null
 
+# Tarea heartbeat: verifica cada 30 min si el watchdog sigue vivo y lo relanza si no.
+# watchdog.ps1 sale solo si detecta que ya hay otro corriendo, asi que es seguro llamarlo periodicamente.
+$hbTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+    -RepetitionInterval (New-TimeSpan -Minutes 30) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
+
+$hbSettings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -MultipleInstances IgnoreNew `
+    -DontStopIfGoingOnBatteries `
+    -AllowStartIfOnBatteries
+
+Register-ScheduledTask `
+    -TaskName "Noted-Heartbeat" `
+    -Action $action `
+    -Trigger $hbTrigger `
+    -Settings $hbSettings `
+    -Principal $principal `
+    -Force | Out-Null
+
 Write-Host "Tarea 'Noted' registrada para $env:USERDOMAIN\$env:USERNAME"
+Write-Host "Tarea 'Noted-Heartbeat' registrada (cada 30 min)"
 Write-Host "Triggers: $triggerDesc"
 Write-Host "Watchdog: $WatchdogPath"
