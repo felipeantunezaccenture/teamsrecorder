@@ -62,6 +62,21 @@ _LOOPBACK_LATE_WAIT = 10.0
 # La voz humana no tiene contenido útil por debajo de 80 Hz.
 _HIGHPASS_HZ = 80.0
 
+# Vigilancia del micrófono. Con auriculares Bluetooth, Windows cambia de perfil
+# y de dispositivo por defecto al entrar en una llamada, y el stream que se
+# abrió al empezar puede quedarse mudo o parar sin lanzar ningún error. Antes
+# eso dejaba la grabación sin la voz de quien graba y nadie se enteraba.
+_MIC_STALL_SECONDS = 2.0      # sin callbacks: el stream está muerto
+_MIC_SILENT_SECONDS = 15.0    # solo ceros digitales: el dispositivo ya no entrega señal
+_MIC_SILENT_RETRY = 30.0      # entre reaperturas por silencio (puede ser mute de hardware)
+_MIC_RETRY_WAIT = 2.0         # entre intentos mientras no hay micrófono
+_MIC_WARN_AFTER = 6.0         # sin micrófono tanto tiempo: avisar al usuario
+# Un dispositivo muerto no entrega ceros exactos sino ±1-2 LSB de 16 bits
+# (~3e-5 a 6e-5): en la prueba del 28/10 el micro estuvo así 25 s y con el
+# umbral anterior (1e-5) el vigilante no lo vio. Un micro vivo en una sala
+# silenciosa queda muy por encima de esto (~1e-3).
+_MIC_SILENCE_PEAK = 2e-4
+
 
 class AudioRecorder:
     """Graba micrófono + audio del sistema escribiendo a disco de forma
@@ -110,6 +125,16 @@ class AudioRecorder:
         # Transcripción en vivo de la grabación en curso (live_transcriber.py).
         self._live = None
 
+        # Estado de la vigilancia del micrófono (ver _mic_watchdog).
+        self._mic_lock = threading.Lock()        # contadores que toca el callback
+        self._mic_swap_lock = threading.Lock()   # serializa reabrir/cerrar el stream
+        self._mic_last_cb: float = 0.0
+        self._mic_last_loud: float = 0.0
+        self._mic_samples: int = 0
+        self._mic_error: str | None = None
+        self._mic_watch_stop = threading.Event()
+        self._mic_watch: threading.Thread | None = None
+
         # True si se está capturando el audio del sistema. Cuando es False la
         # grabación solo contiene tu micrófono, y con auriculares eso significa
         # que no queda ni rastro de lo que dicen los demás.
@@ -118,6 +143,7 @@ class AudioRecorder:
         self.on_recording_stopped = None     # callable(wav_path)
         self.on_loopback_unavailable = None  # callable(reason) — grabando solo micrófono
         self.on_write_error = None           # callable(reason) — error al escribir a disco
+        self.on_mic_unavailable = None       # callable(reason) — sin micrófono, se sigue reintentando
 
     @property
     def is_recording(self) -> bool:
@@ -171,15 +197,23 @@ class AudioRecorder:
         )
         self._mic_writer.start()
 
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype='float32',
-            blocksize=int(SAMPLE_RATE * 0.1),
-            callback=self._mic_cb,
-        )
-        self._stream.start()
+        # Si el micrófono no abre no se aborta la grabación: el loopback puede
+        # funcionar, y el vigilante sigue reintentando el micro mientras dure.
+        self._mic_samples = 0
+        self._mic_error = None
+        if not self._open_mic_stream():
+            self._refresh_portaudio()
+            self._open_mic_stream()
         self._mic_t0 = time.monotonic()
+        if self._stream is None:
+            log.error(f"Micrófono no disponible al empezar ({self._mic_error}); "
+                      f"se seguirá intentando durante la grabación")
+        self._mic_watch_stop = threading.Event()
+        self._mic_watch = threading.Thread(
+            target=self._mic_watchdog, args=(self._mic_watch_stop,),
+            daemon=True, name='MicWatchdog',
+        )
+        self._mic_watch.start()
 
         # _recording ya se puso en start(), bajo el lock.
 
@@ -207,6 +241,10 @@ class AudioRecorder:
             return None
         self._recording = False
         self._close_inputs()
+        # Si el micro estuvo caído al final, el fichero se queda corto y, si no
+        # llegó a abrirse nunca, vacío (y entonces se descartaba todo, loopback
+        # incluido). Rellenar con silencio mantiene la línea temporal.
+        self._mic_pad_to_now()
         self._close_writers()
         if self._live:
             self._live.stop()
@@ -250,8 +288,164 @@ class AudioRecorder:
         # Solo encolar: PortAudio invoca este callback en un hilo de tiempo real
         # y escribir a disco aquí produciría cortes en el audio.
         q = self._mic_q
-        if q is not None:
-            q.put(indata.copy().reshape(-1))
+        if q is None:
+            return
+        block = indata.copy().reshape(-1)
+        now = time.monotonic()
+        with self._mic_lock:
+            self._mic_last_cb = now
+            self._mic_samples += len(block)
+            if len(block) and float(np.abs(block).max()) > _MIC_SILENCE_PEAK:
+                self._mic_last_loud = now
+        q.put(block)
+
+    # ── vigilancia del micrófono ─────────────────────────────────────────────
+
+    @staticmethod
+    def _mic_candidates() -> list:
+        """El dispositivo por defecto primero y, si falla, el resto de entradas
+        de su misma API (excluyendo el loopback), para no quedarse sin micro
+        por un dispositivo concreto que Windows acaba de retirar."""
+        cands: list = [None]
+        try:
+            default_api = sd.query_hostapis(sd.default.hostapi)['name']
+            apis = sd.query_hostapis()
+            for i, dev in enumerate(sd.query_devices()):
+                name = dev['name'].lower()
+                if (dev['max_input_channels'] > 0
+                        and apis[dev['hostapi']]['name'] == default_api
+                        and not any(k in name for k in ('stereo mix', 'mezcla', 'loopback', 'mapper'))):
+                    cands.append(i)
+        except Exception as e:
+            log.debug(f"No se pudo listar los micrófonos alternativos: {e}")
+        return cands
+
+    def _open_mic_stream(self) -> bool:
+        last = None
+        for dev in self._mic_candidates():
+            stream = None
+            try:
+                stream = sd.InputStream(
+                    samplerate=SAMPLE_RATE, channels=1, dtype='float32',
+                    blocksize=int(SAMPLE_RATE * 0.1), device=dev,
+                    callback=self._mic_cb,
+                )
+                stream.start()
+            except Exception as e:
+                last = e
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+                continue
+            now = time.monotonic()
+            with self._mic_lock:
+                self._mic_last_cb = now
+                self._mic_last_loud = now
+            self._stream = stream
+            try:
+                name = sd.query_devices(stream.device)['name']
+            except Exception:
+                name = str(dev)
+            log.info(f"Micrófono abierto: {name}")
+            return True
+        self._mic_error = str(last) if last else 'no hay dispositivos de entrada'
+        return False
+
+    def _refresh_portaudio(self):
+        """PortAudio guarda la lista de dispositivos del momento en que arrancó.
+        Tras un cambio de auriculares el "por defecto" sigue apuntando al
+        anterior hasta reiniciarlo. No se hace si el loopback por Stereo Mix
+        tiene un stream abierto, porque se lo llevaría por delante."""
+        if self._stereo_stream is not None:
+            return
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception as e:
+            log.warning(f"No se pudo refrescar la lista de dispositivos de audio: {e}")
+
+    def _mic_pad_to_now(self):
+        """Rellena con silencio lo que falta del micrófono respecto al reloj,
+        para que el hueco de una caída no desalinee el micro con el loopback."""
+        q, t0 = self._mic_q, self._mic_t0
+        if q is None or t0 is None:
+            return
+        with self._mic_lock:
+            deficit = int((time.monotonic() - t0) * SAMPLE_RATE) - self._mic_samples
+            if deficit <= SAMPLE_RATE * 0.2:
+                return
+            self._mic_samples += deficit
+        q.put(np.zeros(deficit, dtype=np.float32))
+
+    def _reopen_mic(self) -> bool:
+        with self._mic_swap_lock:
+            if not self._recording:
+                return False
+            old, self._stream = self._stream, None
+            if old is not None:
+                # Cerrar un dispositivo que ya murió puede bloquearse: en un hilo
+                # aparte para que la vigilancia no se quede colgada con él.
+                def _close(s=old):
+                    try:
+                        s.stop()
+                        s.close()
+                    except Exception:
+                        pass
+                closer = threading.Thread(target=_close, daemon=True, name='MicClose')
+                closer.start()
+                closer.join(timeout=3)
+            self._refresh_portaudio()
+            self._mic_pad_to_now()
+            return self._open_mic_stream()
+
+    def _mic_watchdog(self, stop: threading.Event):
+        """Garantiza que el micrófono sigue entregando audio durante toda la
+        grabación y lo reabre (en el dispositivo por defecto actual) si no."""
+        outage_since: float | None = None
+        warned = False
+        next_try = 0.0
+        silent_next = 0.0
+        while not stop.wait(1.0):
+            if not self._recording:
+                return
+            now = time.monotonic()
+            with self._mic_lock:
+                since_cb = now - self._mic_last_cb
+                since_loud = now - self._mic_last_loud
+            reason = None
+            if self._stream is None:
+                reason = f"sin stream ({self._mic_error})"
+            elif since_cb > _MIC_STALL_SECONDS:
+                reason = f"sin datos desde hace {since_cb:.0f}s"
+            elif since_loud > _MIC_SILENT_SECONDS and now >= silent_next:
+                reason = f"solo silencio digital desde hace {since_loud:.0f}s"
+                silent_next = now + _MIC_SILENT_RETRY
+            if reason is None:
+                if outage_since is not None:
+                    log.info(f"Micrófono recuperado tras {now - outage_since:.0f}s")
+                    outage_since, warned = None, False
+                continue
+            if outage_since is None:
+                outage_since = now
+                log.warning(f"Micrófono caído: {reason}. Reabriendo en el dispositivo por defecto")
+            if now < next_try:
+                continue
+            next_try = now + _MIC_RETRY_WAIT
+            if self._reopen_mic():
+                outage_since, warned = None, False
+                log.info("Micrófono reabierto")
+                continue
+            if not warned and now - outage_since >= _MIC_WARN_AFTER:
+                warned = True
+                log.error(f"SIN micrófono desde hace {now - outage_since:.0f}s: {self._mic_error}. "
+                          f"Se sigue reintentando.")
+                if self.on_mic_unavailable:
+                    threading.Thread(
+                        target=self.on_mic_unavailable, args=(self._mic_error or reason,),
+                        daemon=True, name='MicWarning',
+                    ).start()
 
     def _writer_loop(self, q: queue.Queue, path: Path, channels: int, samplerate: int,
                      label: str, highpass: bool = False):
@@ -564,10 +758,15 @@ class AudioRecorder:
     # ── cierre ───────────────────────────────────────────────────────────────
 
     def _close_inputs(self):
-        if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        self._mic_watch_stop.set()
+        with self._mic_swap_lock:
+            stream, self._stream = self._stream, None
+        if stream:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception as e:
+                log.warning(f"Error cerrando el micrófono: {e}")
 
         if self._stereo_stream:
             try:

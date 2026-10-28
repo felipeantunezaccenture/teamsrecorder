@@ -148,6 +148,7 @@ def main():
 
         recorder.on_loopback_unavailable = tray.warn_loopback_unavailable
         recorder.on_write_error = tray.warn_disk_full
+        recorder.on_mic_unavailable = tray.warn_mic_unavailable
 
         _popup_active      = [False]   # guard para evitar popups múltiples
         _active_generation = [None]    # generación capturada en el último on_call_started
