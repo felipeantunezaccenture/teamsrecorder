@@ -489,3 +489,35 @@ def test_las_preguntas_no_dejan_nada_en_disco(api, cli, monkeypatch, tr_dirs):
 
 def test_una_pregunta_desconocida_se_da_por_terminada(api):
     assert api.get_ask_status('no-existe') == {'text': '', 'done': True, 'error': 'unknown_run', 'upto': None}
+
+# -- Lo que falla antes de preguntar --------------------------------------------
+
+def test_sin_marcas_de_tiempo_no_hay_ultimo_minuto():
+    assert qa.last_timestamp(['hola', 'sin minuto']) is None
+    assert qa.last_timestamp(['[00:05] hola', '[01:10] adios', 'suelta']) == '01:10'
+
+
+def test_una_sesion_sin_cli_no_abre_nada(monkeypatch):
+    monkeypatch.setattr(config, 'get_claude_bin', lambda: None)
+    monkeypatch.setattr(qa.subprocess, 'Popen', lambda *a, **k: pytest.fail('lanzo claude sin cli'))
+    s = qa.Session()
+    assert s.proc is None and not s.alive()
+
+
+def test_si_claude_no_arranca_la_sesion_queda_muerta_sin_lanzar(monkeypatch):
+    def revienta(*_a, **_k):
+        raise OSError('politica de ejecucion')
+
+    monkeypatch.setattr(config, 'get_claude_bin', lambda: 'claude')
+    monkeypatch.setattr(qa.subprocess, 'Popen', revienta)
+    s = qa.Session()
+    assert s.proc is None and not s.alive()
+
+
+def test_si_claude_no_arranca_la_pregunta_suelta_lo_dice(monkeypatch):
+    def revienta(*_a, **_k):
+        raise OSError('politica de ejecucion')
+
+    monkeypatch.setattr(config, 'get_claude_bin', lambda: 'claude')
+    monkeypatch.setattr(qa.subprocess, 'Popen', revienta)
+    assert 'politica de ejecucion' in qa.ask(['[00:01] hola'], 'que se dijo')['error']
