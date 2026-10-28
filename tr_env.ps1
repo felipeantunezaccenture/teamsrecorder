@@ -2,9 +2,9 @@
 #
 # Una sola implementacion de "donde esta instalado", "que interprete usar" y
 # "como parar/arrancar el daemon". Lo usan watchdog.ps1,
-# restart_after_update.ps1 (llamado por hooks/post-merge) y la skill
-# .claude/skills/noted. Ningun consumidor debe reinventar esta logica
-# ni hardcodear rutas de instalacion.
+# restart_after_update.ps1 (llamado por hooks/post-merge),
+# scripts/restart_noted.ps1 y el comando /update-noted. Ningun consumidor
+# debe reinventar esta logica ni hardcodear rutas de instalacion.
 #
 # Uso:  . (Join-Path $dir "tr_env.ps1")
 
@@ -133,19 +133,77 @@ function Get-TRPython {
 }
 
 
-function Test-TRRecording {
-    # $true si hay una grabacion en curso. Nunca reinicies la app si lo devuelve.
+function Get-TRLivePid {
+    # El PID que guarda un fichero (.lock, .recording_active) si es un Python
+    # vivo, o $null. Es el criterio de main.py (_check_single_instance) para
+    # dar por buena otra instancia: un PID muerto, o reciclado por otro
+    # programa, no cuenta.
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    $id = 0
+    if (-not $raw -or -not [int]::TryParse($raw.Trim(), [ref]$id)) { return $null }
+    $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
+    if ($proc -and $proc.ProcessName -like '*python*') { return $id }
+    return $null
+}
+
+
+function Read-TRPipelineJobs {
+    # Una lectura de lo que hay en marcha. Un fichero a medio escribir (el
+    # daemon lo trunca y lo reescribe) cuenta como vacio; lo tapa la segunda
+    # lectura de Get-TRActiveJobs.
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][int]$DaemonPid
+    )
+
+    $jobs = @()
+    try {
+        $status = Get-Content -LiteralPath (Join-Path $Root '.pipeline_status.json') -Raw -Encoding UTF8 -ErrorAction Stop |
+            ConvertFrom-Json
+        # Where-Object: con un fichero vacio .jobs es $null, y @($null) cuenta 1.
+        $jobs = @($status.jobs | Where-Object { $_ })
+    } catch {}
+
+    # .recording_active vive desde que empieza la grabacion hasta que el WAV
+    # esta escrito. El ultimo tramo, mezclar y guardar (segundos en una reunion
+    # larga), no sale en .pipeline_status.json: la grabacion ya se marco como
+    # terminada y el trabajo aun no ha entrado en la cola. Uno con otro PID es
+    # de una instancia que murio grabando y no se limpio.
+    $grabando = @($jobs | Where-Object { $_.stage -eq 'recording' }).Count -gt 0
+    if (-not $grabando -and (Get-TRLivePid (Join-Path $Root '.recording_active')) -eq $DaemonPid) {
+        $jobs += [pscustomobject]@{ stage = 'recording'; label = 'guardando el audio de la reunion' }
+    }
+    return $jobs
+}
+
+
+function Get-TRActiveJobs {
+    # Lo que un reinicio mataria ahora mismo: grabacion, procesado
+    # (transcribir, minutas, coaching, acciones) o cola. Vacio = se puede
+    # reiniciar. TODO reinicio pasa por aqui: hooks/post-merge
+    # (restart_after_update.ps1), scripts/restart_noted.ps1 y /update-noted.
+    # Cada uno tenia su propia puerta y solo se arreglo una: el 2026-10-13 un
+    # reinicio que solo miraba la grabacion corto el procesado de una reunion
+    # de cliente, y se perdieron su coaching y sus acciones.
+    #
+    # Se lee dos veces, 3 s aparte: entre sacar un trabajo de la cola y
+    # marcarlo como procesando la lista sale vacia un instante. Solo cuenta con
+    # el daemon vivo: si murio a mitad, el fichero se queda con trabajos que ya
+    # nadie va a terminar y no deben impedir arrancarlo.
     param([Parameter(Mandatory = $true)][string]$Root)
 
-    $statusFile = Join-Path $Root '.pipeline_status.json'
-    if (-not (Test-Path $statusFile)) { return $false }
+    $daemon = Get-TRLivePid (Join-Path $Root '.lock')
+    if (-not $daemon) { return @() }
 
-    try {
-        $status = Get-Content $statusFile -Raw -Encoding UTF8 | ConvertFrom-Json
-        return [bool](@($status.jobs | Where-Object { $_.stage -eq 'recording' }).Count)
-    } catch {
-        return $false
+    $jobs = @(Read-TRPipelineJobs -Root $Root -DaemonPid $daemon)
+    if ($jobs.Count -eq 0) {
+        Start-Sleep -Seconds 3
+        $jobs = @(Read-TRPipelineJobs -Root $Root -DaemonPid $daemon)
     }
+    return $jobs
 }
 
 
