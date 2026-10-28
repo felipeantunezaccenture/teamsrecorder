@@ -23,6 +23,7 @@ import json
 import logging
 import re
 import threading
+import time
 import unicodedata
 from pathlib import Path
 
@@ -102,11 +103,26 @@ def save(data: dict) -> bool:
     with _lock:
         try:
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
-            tmp.replace(path)
+            _replace(tmp, path)
             return True
         except OSError as e:
             log.warning(f"No se pudo guardar glossary.json: {e}")
             return False
+
+
+def _replace(tmp: Path, path: Path, attempts: int = 10, wait: float = 0.05) -> None:
+    """os.replace con reintentos. En Windows falla con "Access is denied"
+    (WinError 5) si otro proceso tiene el destino abierto en ese instante: el
+    antivirus o el indexador, que acaban de ver el fichero. Pasa en los tests
+    y en uso normal, y sin reintento se perdia la entrada recien guardada."""
+    for i in range(attempts):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(wait)
 
 
 def entries(project_id: str | None = None) -> list[dict]:

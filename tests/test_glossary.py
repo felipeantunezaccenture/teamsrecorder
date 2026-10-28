@@ -71,6 +71,39 @@ def test_la_escritura_no_deja_temporales():
     assert not list(gl.GLOSSARY_FILE.parent.glob('*.tmp'))
 
 
+def test_un_bloqueo_momentaneo_al_guardar_se_reintenta(monkeypatch):
+    """En Windows el renombrado falla con "Access is denied" si el antivirus o
+    el indexador tienen el fichero abierto en ese instante: pasaba en estos
+    mismos tests, a ratos, y en uso normal perdia la entrada recien guardada."""
+    from pathlib import Path
+    original, intentos = Path.replace, []
+
+    def replace(self, target):
+        intentos.append(1)
+        if len(intentos) < 3:
+            raise PermissionError(5, 'Access is denied')
+        return original(self, target)
+
+    monkeypatch.setattr(Path, 'replace', replace)
+    monkeypatch.setattr(gl.time, 'sleep', lambda _s: None)
+
+    assert gl.save({'entries': [E('A')]}) is True
+    assert len(intentos) == 3
+    assert [e['term'] for e in gl.load()['entries']] == ['A']
+
+
+def test_un_bloqueo_que_no_se_suelta_no_tumba_nada(monkeypatch):
+    from pathlib import Path
+
+    def replace(self, target):
+        raise PermissionError(5, 'Access is denied')
+
+    monkeypatch.setattr(Path, 'replace', replace)
+    monkeypatch.setattr(gl.time, 'sleep', lambda _s: None)
+
+    assert gl.save({'entries': [E('A')]}) is False
+
+
 def test_entries_mezcla_globales_y_las_del_proyecto():
     gl.save({'entries': [E('Global'), E('DeSandoz', project='sandoz'), E('DeOtro', project='otro')]})
     assert [e['term'] for e in gl.entries()] == ['Global']
