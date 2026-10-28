@@ -1,3 +1,4 @@
+import glob
 import json
 import logging
 import queue
@@ -743,10 +744,13 @@ class TrayApp:
         try:
             trash_dir.mkdir(parents=True, exist_ok=True)
             candidates: list[Path] = []
+            # escape: _slugify conserva los corchetes, y "[EXT]" en el patron es
+            # una clase de caracteres que no casa con el nombre real.
+            pat = glob.escape(stem)
             for folder in (RECORDINGS_DIR, RECORDINGS_DIR / 'processed'):
                 if folder.exists():
-                    candidates.extend(folder.glob(f"{stem}.*"))
-                    candidates.extend(folder.glob(f"{stem}_transcript.*"))
+                    candidates.extend(folder.glob(f"{pat}.*"))
+                    candidates.extend(folder.glob(f"{pat}_transcript.*"))
             if minutes_path:
                 candidates += [
                     minutes_path,
@@ -1097,6 +1101,23 @@ class TrayApp:
                                  daemon=True, name='FinalizeNow').start()
 
     def _finalize_session(self, session):
+        """Cierra la reunión. Corre en un hilo suyo (el Timer de _schedule_finalize,
+        finalize_pending_now o la llegada de otra grabación), así que lo que lance
+        no lo recoge nadie: el descarte de _pipeline_loop está en otro hilo. Hasta
+        el 20/10/2026 un descarte a mitad del cierre moría aquí, con las minutas en
+        el panel, el WAV en recordings/ y el trabajo colgado en "Generando minutas".
+        """
+        try:
+            self._finalize_session_body(session)
+        except _Cancelled as c:
+            self._discard_job(session['base_wav'], 'descartada durante el proceso',
+                              getattr(c, 'minutes_path', None))
+        except Exception as e:
+            log.error(f"Error cerrando la reunión {session.get('base_wav')}: {e}", exc_info=True)
+            self._current_job = {}
+            self.set_processing('')
+
+    def _finalize_session_body(self, session):
         from storage import get_transcript_path, get_minutes_path
         from minutes_generator import generate_minutes, extract_title_from_minutes, save_minutes
         from html_exporter import export_to_html
@@ -1226,7 +1247,8 @@ class TrayApp:
 
         title, content = extract_title_from_minutes(raw)
         minutes_path = get_minutes_path(wav_path, title)
-        save_minutes(content, minutes_path)
+        existed = minutes_path.exists()
+        saved = save_minutes(content, minutes_path)
 
         # Si se descartó mientras Claude generaba, las minutas ya están en disco:
         # se adjuntan a la excepción para que se vayan a la papelera con el resto.
@@ -1234,6 +1256,23 @@ class TrayApp:
             exc = _Cancelled()
             exc.minutes_path = minutes_path
             raise exc
+
+        # Sin .md la reunión no existe en el panel. El WAV y el transcript se
+        # quedan en recordings/: _recover_pending la reencola en el siguiente
+        # arranque y el pipeline reaprovecha el transcript, sin pasar por Whisper.
+        # write_text trunca antes de escribir: con el disco lleno deja un .md a
+        # medias, y _recover_pending lo daría por hecho. Solo se borra si lo
+        # creó este intento; uno que ya estaba no es suyo.
+        if not saved:
+            if not existed:
+                try:
+                    minutes_path.unlink(missing_ok=True)
+                except OSError as e:
+                    log.warning(f"No se pudo borrar la minuta a medias {minutes_path.name}: {e}")
+            self._notify('Noted ⚠', s['minutes_failed'])
+            self._current_job = {}
+            self.set_processing('')
+            return
 
         # El archivado en la carpeta del proyecto NO se hace aquí: _proj viene de
         # detect_project() (palabras clave sobre el transcript) y solo sirve para
@@ -1402,7 +1441,7 @@ class TrayApp:
                     continue
             stem_ts = wav.stem[:16]
             ts_compact = stem_ts[:4] + stem_ts[5:7] + stem_ts[8:10] + '_' + stem_ts[11:13] + stem_ts[14:16]
-            has_minutes = any(MINUTES_DIR.glob(f"{ts_compact}_*.md"))
+            has_minutes = any(MINUTES_DIR.glob(f"{glob.escape(ts_compact)}_*.md"))
             if not has_minutes:
                 pending.append(wav)
 
