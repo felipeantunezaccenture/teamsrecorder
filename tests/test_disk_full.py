@@ -676,7 +676,7 @@ def test_la_limpieza_no_se_lleva_un_part_que_aun_se_puede_recuperar(tr_dirs):
     vacio = rec_dir / '2026-10-01_11-00_Nada.mic.part'
     _part(con_audio, np.full(SAMPLE_RATE, 0.3, dtype=np.float32))
     _part(vacio, np.zeros(0, dtype=np.float32))
-    viejo = _time.time() - 30 * 86400
+    viejo = _time.time() - 20 * 86400       # pasada la retencion, dentro del tope de lo pendiente
     for p in (con_audio, vacio):
         os.utime(p, (viejo, viejo))
 
