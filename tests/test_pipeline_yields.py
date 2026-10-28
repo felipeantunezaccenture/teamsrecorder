@@ -244,5 +244,30 @@ def test_el_should_pause_del_pipeline(tray, monkeypatch):
     monkeypatch.setattr(tray, '_defer_reason', lambda: 'disco')
     assert tray._pipeline_should_pause() == transcriber.DEFER
     monkeypatch.setattr(tray, '_defer_reason', lambda: None)
+    monkeypatch.setattr(tray, '_live_priority', lambda: False)
+    assert tray._pipeline_should_pause() is False
     monkeypatch.setattr(tray, '_live_priority', lambda: True)
+    monkeypatch.setattr(transcriber, '_model', None)
     assert tray._pipeline_should_pause() is True
+
+
+def test_con_el_modelo_cargado_el_en_vivo_lo_aparta(tray, monkeypatch):
+    """Revision del 28/10: pausar con 'medium' cargado lo dejaba toda la reunion
+    en memoria junto al 'small' del en vivo. Se aparta: suelta el modelo y sigue
+    al colgar."""
+    monkeypatch.setattr(tray, '_defer_reason', lambda: None)
+    monkeypatch.setattr(tray, '_live_priority', lambda: True)
+    monkeypatch.setattr(transcriber, '_model', object())
+    assert tray._pipeline_should_pause() == transcriber.DEFER
+
+
+def test_mientras_se_guarda_la_anterior_tambien_se_aparta(tray, recursos):
+    """Con el disco lleno, el guardado de la reunion que acaba de terminar
+    espera sitio con su audio en memoria: no se le puede quitar con 'medium'."""
+    class Guardando:
+        is_recording = False
+        is_saving = True
+
+    tray._recorder = Guardando()
+    recursos['disk_ok'] = False
+    assert tray._defer_reason() == 'disco'
