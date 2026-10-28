@@ -165,6 +165,7 @@ def main():
         recorder.on_write_error = tray.warn_disk_full
         recorder.on_write_recovered = tray.warn_disk_recovered
         recorder.on_save_failed = tray.warn_save_failed
+        recorder.on_mic_unavailable = tray.warn_mic_unavailable
 
         _popup_active      = [False]   # guard para evitar popups múltiples
         _active_generation = [None]    # generación capturada en el último on_call_started
