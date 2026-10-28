@@ -360,15 +360,6 @@ class TrayApp:
         except Exception as e:
             log.warning(f"Pistas del glosario no disponibles para {path.name}: {e}")
 
-    @staticmethod
-    def _glossary_entries(ctx: dict) -> list:
-        """Entradas del glosario releidas ahora; si no se puede, las de ctx."""
-        try:
-            import glossary
-            return glossary.entries(ctx.get('project_id'))
-        except Exception:
-            return ctx.get('entries') or []
-
     def _write_live_ctl(self, path: Path) -> bool:
         """Lo que el proceso de la reunion tiene que hacer: modo y si debe ceder
         el modelo. Se escribe aunque el proceso aun no exista (se lanza a los
@@ -936,10 +927,9 @@ class TrayApp:
             text, lang = result if result is not None else ('', '')
             if text.strip():
                 # Las correcciones, una vez y sobre todo el texto: lo hecho durante
-                # la reunion y la cola. Con las entradas de ahora, no las del
-                # principio: una sugerencia aprobada durante la reunion ya cuenta.
-                text = transcriber._correct_with_glossary(text, dict(
-                    glossary_ctx, entries=self._glossary_entries(glossary_ctx)))
+                # la reunion y la cola (con las entradas de ahora, ver
+                # transcriber._correct_with_glossary).
+                text = transcriber._correct_with_glossary(text, glossary_ctx)
             if result is not None and not text.strip():
                 # Sin voz: que lo confirme el camino de siempre, que es el que
                 # sabe tratar una grabacion vacia.

@@ -678,3 +678,13 @@ def test_si_las_sugerencias_fallan_el_pipeline_no_se_entera(tray_factory, monkey
     monkeypatch.setattr(gl, 'suggest_from_meeting', boom)
 
     tray_factory()._suggest_glossary_terms('t', 'm', [], 'm1')      # no debe lanzar
+
+def test_transcribe_corrige_con_las_entradas_de_ahora(monkeypatch, tr_dirs):
+    """recording_context se cachea al empezar a grabar: una sugerencia aprobada
+    durante la reunion no estaria en el contexto, y tiene que corregir igual."""
+    monkeypatch.setattr(tr, '_transcribe_local', lambda p, **kw: ('[00:01] hablamos de Kinexis', 'es'))
+    monkeypatch.setattr(tr, '_glossary_context',
+                        lambda p: {'hotwords': '', 'project_id': None, 'entries': []})
+    gl.upsert_entry({'term': 'Kinaxis', 'aliases': ['Kinexis']})
+
+    assert tr.transcribe(tr_dirs / 'recordings' / 'a.wav')[0] == '[00:01] hablamos de Kinaxis'
