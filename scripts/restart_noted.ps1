@@ -3,8 +3,6 @@
 # los metodos Win32_Process.Create disparan alertas de seguridad en entornos corporativos.
 
 $root = Split-Path $PSScriptRoot -Parent
-$venvPython = Join-Path $root ".venv\Scripts\python.exe"
-$venv = if (Test-Path $venvPython) { $venvPython } else { (Get-Command python -ErrorAction Stop).Source }
 $main = Join-Path $root "main.py"
 
 # -- GUARDRAIL: no reiniciar con trabajo a medias ------------------------------
@@ -13,6 +11,16 @@ $main = Join-Path $root "main.py"
 # su propia copia, se arreglo solo aqui (377ee27) y la del hook siguio dejando
 # reiniciar a mitad de un procesado.
 . (Join-Path $root 'tr_env.ps1')
+
+# Sin venv, el Python global (9b4e15a), buscado con Get-TRPython: descarta el
+# alias de WindowsApps, que abre la Store en vez de arrancar nada.
+$py = Get-TRPython -Root $root
+if (-not $py) {
+    Write-Host "  No se encontro Python: ni .venv ni uno instalado." -ForegroundColor Red
+    exit 1
+}
+$venv = $py.Python
+
 $jobs = @(Get-TRActiveJobs -Root $root)
 if ($jobs.Count -gt 0) {
     Write-Host ""
