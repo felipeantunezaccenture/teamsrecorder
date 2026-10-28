@@ -153,6 +153,18 @@ def test_un_nombre_vacio_nunca_es_una_reconexion(con_sesion):
     assert app.has_pending_session('') is False
 
 
+@pytest.mark.parametrize('pasajero', ['Unión a la reunión', 'Join meeting',
+                                      'Barra de control de uso compartido', 'Sharing control bar'])
+def test_un_titulo_pasajero_de_teams_no_es_una_reconexion(con_sesion, pasajero):
+    """20/10/2026, caso real: la reunion de las 09:21 quedo grabada como 'Unión a
+    la reunión' (la ventana de Teams mientras te unes). A las 11:04, al unirse a
+    otra llamada, su ventana tenia ese mismo titulo y salio 'Misma reunión
+    detectada' para una reunion distinta. Esos titulos no son nombres."""
+    assert con_sesion(pasajero).has_pending_session(pasajero) is False
+    assert con_sesion('Daily Touchpoint').has_pending_session(pasajero) is False
+    assert con_sesion(pasajero).has_pending_session('Daily Touchpoint') is False
+
+
 def test_una_sesion_sin_nombre_no_admite_reconexion(con_sesion):
     """Una grabacion manual no tiene nombre de reunion: no debe absorber la
     siguiente llamada que llegue."""

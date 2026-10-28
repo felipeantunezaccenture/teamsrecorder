@@ -503,6 +503,14 @@ class TrayApp:
                          f"(idioma detectado '{detected_language}'; la duracion "
                          f"la registra faster_whisper justo encima)")
                 self._notify('Noted', s['no_speech'])
+                # Y se saca de recordings/, como hace el camino bueno. Sin
+                # esto la grabacion se queda ahi para siempre: _recover_pending
+                # busca WAVs sin minutas, y una grabacion sin voz NUNCA las
+                # tendra, asi que se reencolaba en CADA arranque del daemon.
+                # Cada vez costaba una carga de Whisper — ~1 GB y 15 s — en una
+                # maquina donde quedarse sin memoria es lo que tumba el worker
+                # del loopback y hace perder las voces de los demas.
+                self._move_to_processed(wav_path, transcript_path)
                 self.set_processing('')
                 return
 
@@ -575,6 +583,14 @@ class TrayApp:
             sess['timer'] = timer
             timer.start()
 
+    # Titulos de ventanas pasajeras de Teams, no nombres de reunion: con ellos no
+    # se puede decir que dos llamadas sean la misma. 20/10/2026: una reunion
+    # grabada como 'Unión a la reunión' hizo preguntar "Misma reunión
+    # detectada" al unirse a otra llamada distinta.
+    _TRANSIENT_TITLES = ('Unión a la reunión', 'Unirse a la reunión', 'Join meeting', 'Joining meeting',
+                         'Barra de control de uso compartido', 'Sharing control bar',
+                         'Vista compacta de la reunión', 'Meeting compact view')
+
     def has_pending_session(self, meeting_name: str) -> bool:
         with self._session_lock:
             sess = self._session
@@ -583,6 +599,9 @@ class TrayApp:
             key = self._norm_key(meeting_name)
             skey = sess.get('key') or ''
             if not key or not skey:
+                return False
+            transient = {self._norm_key(t) for t in self._TRANSIENT_TITLES}
+            if key in transient or skey in transient:
                 return False
             return key == skey or key in skey or skey in key
 
