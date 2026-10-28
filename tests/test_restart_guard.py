@@ -25,9 +25,10 @@ podria parar ningun proceso.
 "Daemon vivo" es un .lock con el PID de un Python vivo, lo mismo que mira
 main.py: se usa el PID del propio pytest.
 
-scripts/restart_noted.ps1 NO se ejecuta aqui a proposito: si su puerta fallase
-mataria cualquier Python con una ventana titulada "Noted", que en esta maquina
-es el panel real de la app. Para el basta la comprobacion de texto.
+scripts/restart_noted.ps1 tambien se ejecuta aqui, con los mismos dobles: desde
+que para con Stop-TRDaemon y arranca con Start-TRDaemon ya no mata nada a
+ciegas (antes mataba cualquier Python con una ventana titulada "Noted", que
+tambien es el panel real de la app, y por eso no se ejecutaba en los tests).
 """
 import json
 import os
@@ -87,13 +88,14 @@ def test_update_noted_consulta_la_puerta_antes_del_pull():
 
 
 @pytest.mark.unit
-def test_restart_noted_busca_python_con_get_trpython():
-    """Sin .venv cae al Python global (9b4e15a), pero por Get-TRPython:
-    Get-Command python puede devolver el alias de WindowsApps, que abre la
-    Store en vez de arrancar la app."""
+def test_restart_noted_no_lanza_main_py_por_su_cuenta():
+    """El watchdog es el unico que lanza main.py: restart_noted arrancaba el
+    suyo con el watchdog vivo relanzando otro a la vez, y mataba por titulo de
+    ventana ("*Noted*"), que tambien es el panel."""
     texto = (REPO / 'scripts' / 'restart_noted.ps1').read_text(encoding='utf-8-sig')
-    assert 'Get-TRPython' in texto, "restart_noted.ps1 busca Python por su cuenta"
-    assert 'Get-Command python' not in texto, "restart_noted.ps1 puede acabar en el alias de WindowsApps"
+    assert 'Stop-TRDaemon' in texto and 'Start-TRDaemon' in texto
+    assert not re.search(r'^\s*[^#\s].*\bStart-Process\b', texto, re.M), "lanza algo por su cuenta"
+    assert 'MainWindowTitle' not in texto, "vuelve a matar por titulo de ventana"
 
 
 # -- El hook de verdad, con PowerShell ----------------------------------------
@@ -129,6 +131,8 @@ def noted(tmp_path):
     raiz.mkdir()
     log = raiz / 'calls.log'
     shutil.copy(REPO / 'restart_after_update.ps1', raiz)
+    (raiz / 'scripts').mkdir()
+    shutil.copy(REPO / 'scripts' / 'restart_noted.ps1', raiz / 'scripts')
     tr_env = (REPO / 'tr_env.ps1').read_text(encoding='utf-8-sig')
     (raiz / 'tr_env.ps1').write_text(tr_env + _dobles(raiz, log), encoding='utf-8-sig')
 
@@ -144,10 +148,10 @@ def noted(tmp_path):
             texto = crudo if crudo is not None else json.dumps({'jobs': list(jobs)})
             (raiz / nombre).write_text(texto, encoding='utf-8')
 
-        def hook(self):
+        def hook(self, script='restart_after_update.ps1'):
             r = subprocess.run(
                 [_PWSH, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                 '-File', str(raiz / 'restart_after_update.ps1')],
+                 '-File', str(raiz / script)],
                 capture_output=True, text=True, timeout=120)
             llamadas = log.read_text(encoding='utf-8-sig').splitlines() if log.exists() else []
             return r, llamadas
@@ -254,3 +258,33 @@ def test_guardando_el_wav_bloquea_aunque_el_estado_este_vacio(noted, dueno, bloq
         assert 'grabacion' in _avisos(llamadas)[0].lower()
     else:
         assert _reinicio(llamadas) == list(_PARADAS), f"{llamadas}\n{r.stdout}{r.stderr}"
+
+
+# -- restart_noted.ps1 de verdad, con los mismos dobles -----------------------
+
+@pytest.mark.integration
+@_con_powershell
+def test_restart_noted_con_trabajo_en_curso_no_para_nada(noted):
+    noted.daemon_vivo()
+    noted.estado(PROCESANDO)
+
+    r, llamadas = noted.hook('scripts/restart_noted.ps1')
+
+    assert not _reinicio(llamadas), f"{llamadas}\n{r.stdout}{r.stderr}"
+    assert r.returncode == 1 and 'TRABAJANDO' in r.stdout
+
+
+@pytest.mark.integration
+@_con_powershell
+def test_restart_noted_en_reposo_para_el_daemon_y_lo_arranca_por_el_watchdog(noted):
+    """Solo el daemon: el watchdog lo relanza, y si no lo hay, Start-TRDaemon
+    lo arranca. Sin pararlo, como el hook, porque no hay dependencias que
+    actualizar."""
+    noted.daemon_vivo()
+    noted.estado()
+
+    r, llamadas = noted.hook('scripts/restart_noted.ps1')
+
+    assert _reinicio(llamadas) == ['Stop-TRDaemon', 'Start-TRDaemon'], f"{llamadas}\n{r.stdout}{r.stderr}"
+    assert r.returncode == 0 and 'Noted arrancado' in r.stdout
+
