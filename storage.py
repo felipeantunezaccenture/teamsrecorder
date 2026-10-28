@@ -56,6 +56,15 @@ def list_recordings(limit: int = 10) -> list[Path]:
     return files[:limit]
 
 
+def _has_minutes(audio: Path) -> bool:
+    """Si la reunion de este audio ya tiene minutas: el mismo criterio con el
+    que tray_app._recover_pending decide si reencolarla al arrancar."""
+    m = re.match(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})', audio.name)
+    if not m:
+        return False
+    return any(MINUTES_DIR.glob(f'{"".join(m.group(1, 2, 3))}_{"".join(m.group(4, 5))}_*.md'))
+
+
 def cleanup_old_recordings(days: int = 10):
     cutoff = datetime.now() - timedelta(days=days)
     audio_patterns = ('*.wav', '*.mp3')
@@ -64,6 +73,12 @@ def cleanup_old_recordings(days: int = 10):
         for pattern in audio_patterns + aux_patterns:
             for f in d.glob(pattern):
                 if datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
+                    # Un audio sin minutas en recordings/ es una reunion sin
+                    # procesar (fallo, o el portatil estuvo apagado): se reencola
+                    # al arrancar, justo despues de esta limpieza. Borrarlo por
+                    # antiguo seria perder la reunion. Los de processed/ ya la tienen.
+                    if d == RECORDINGS_DIR and pattern in audio_patterns and not _has_minutes(f):
+                        continue
                     try:
                         f.unlink()
                     except OSError:

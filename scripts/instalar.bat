@@ -147,7 +147,9 @@ echo.
 echo   Autenticando Claude CLI (se abrira el navegador)...
 echo   Vincula tu cuenta de Anthropic para que las minutas funcionen.
 echo.
-claude login
+rem "call": si claude es el wrapper claude.cmd de npm, sin call el .bat se
+rem entrega a el y no vuelve, y Noted no llega a arrancarse.
+call claude login
 if errorlevel 1 (
     echo.
     echo   AVISO: La autenticacion no se completo. Puedes hacerlo mas tarde

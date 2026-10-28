@@ -70,7 +70,12 @@ def _find_claude_bin() -> str | None:
     # 2. Rutas habituales de instalación (cubre Task Scheduler y PATH limitado)
     appdata = os.environ.get('APPDATA', '')
     localappdata = os.environ.get('LOCALAPPDATA', '')
+    userprofile = os.environ.get('USERPROFILE', '')
     candidates: list[Path] = []
+    if userprofile:
+        # El instalador nativo de Claude Code (el que recomienda Anthropic, y el
+        # que se actualiza solo) deja el ejecutable aqui, no en npm.
+        candidates.append(Path(userprofile) / '.local' / 'bin' / 'claude.exe')
     if appdata:
         npm = Path(appdata) / 'npm'
         candidates += [npm / 'claude.cmd', npm / 'claude.exe', npm / 'claude']

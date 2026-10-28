@@ -214,9 +214,9 @@ def grabaciones_viejas(tr_dirs, wav_factory):
     return {'viejos': viejos, 'reciente': reciente, 'minuta': minuta}
 
 
-def test_cleanup_borra_el_audio_y_los_auxiliares_viejos(grabaciones_viejas):
+def test_cleanup_borra_los_auxiliares_viejos(grabaciones_viejas):
     storage.cleanup_old_recordings(days=15)
-    assert not any(p.exists() for p in grabaciones_viejas['viejos'])
+    assert not any(p.exists() for p in grabaciones_viejas['viejos'] if p.suffix != '.wav')
 
 
 def test_cleanup_no_toca_lo_reciente(grabaciones_viejas):
@@ -238,11 +238,12 @@ def test_cleanup_tambien_limpia_processed(tr_dirs, wav_factory):
     assert not p.exists()
 
 
-def test_cleanup_borra_un_wav_aunque_no_tenga_minutas(grabaciones_viejas):
-    """DEFECTO CONOCIDO, se fija el comportamiento actual: no comprueba si la
-    reunion llego a generar minutas. Un WAV de hace 16 dias que nunca se
-    proceso se borra sin dejar rastro."""
+def test_cleanup_no_borra_un_wav_sin_minutas(grabaciones_viejas):
+    """Era un DEFECTO CONOCIDO que este test fijaba: no se comprobaba si la
+    reunion llego a generar minutas, y un WAV de hace 16 dias que nunca se
+    proceso se borraba sin dejar rastro. Ahora se queda hasta que se procese
+    (detalle en test_retention.py)."""
     huerfano = grabaciones_viejas['viejos'][0]
     assert not huerfano.with_suffix('.md').exists()
     storage.cleanup_old_recordings(days=15)
-    assert not huerfano.exists()
+    assert huerfano.exists()
