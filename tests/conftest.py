@@ -221,6 +221,26 @@ def live_spawns(monkeypatch):
     return calls
 
 
+@pytest.fixture(autouse=True)
+def sin_outlook_de_verdad(monkeypatch):
+    """Ningun test habla con el Outlook de la maquina.
+
+    Al empezar una grabacion, tray_app calcula las pistas del glosario
+    (glossary.recording_context), que buscan la reunion en el calendario: sin
+    esto, un test leeria el Outlook real de quien lo corre. Los que necesitan
+    uno lo piden con fake_outlook, que sustituye a este.
+    """
+    try:
+        import outlook_sender
+    except ImportError:
+        return
+
+    def sin_outlook():
+        raise OSError('Outlook no disponible en los tests')
+
+    monkeypatch.setattr(outlook_sender, '_get_outlook', sin_outlook)
+
+
 @pytest.fixture
 def tray_factory(tr_dirs):
     """Fabrica TrayApp SIN pasar por __init__, para no arrancar los tres hilos.

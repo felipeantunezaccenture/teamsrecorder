@@ -338,6 +338,29 @@ class TrayApp:
                     self._live_spawning.discard(path.stem)
 
         threading.Thread(target=run, daemon=True, name='LiveSpawn').start()
+        threading.Thread(target=self._write_live_hints, args=(path,), daemon=True,
+                         name='LiveHints').start()
+
+    def _write_live_hints(self, path: Path):
+        """Pistas del glosario (invitados, asunto, terminos) para la transcripcion
+        durante la reunion, que las lee de <stem>.live.hints. En su propio hilo:
+        recording_context puede consultar Outlook, y eso no debe retrasar el
+        lanzamiento. Si falla, se transcribe sin pistas."""
+        try:
+            import live_transcriber
+            import transcriber
+            live_transcriber.write_hints(path, transcriber._glossary_context(path)['hotwords'])
+        except Exception as e:
+            log.warning(f"Pistas del glosario no disponibles para {path.name}: {e}")
+
+    @staticmethod
+    def _glossary_entries(ctx: dict) -> list:
+        """Entradas del glosario releidas ahora; si no se puede, las de ctx."""
+        try:
+            import glossary
+            return glossary.entries(ctx.get('project_id'))
+        except Exception:
+            return ctx.get('entries') or []
 
     def _write_live_ctl(self, path: Path) -> bool:
         """Lo que el proceso de la reunion tiene que hacer: modo y si debe ceder
@@ -895,12 +918,21 @@ class TrayApp:
             return
         try:
             self.set_processing('Transcribiendo...')
+            import transcriber
+            glossary_ctx = transcriber._glossary_context(wav_path)
             result = live_transcriber.finish_live(
                 wav_path,
                 on_progress=lambda pct: self.set_processing(f'Transcribiendo {pct}%...'),
                 should_cancel=lambda: self._is_cancelled(wav_path.stem),
-                should_pause=self._live_priority)
+                should_pause=self._live_priority,
+                hotwords=glossary_ctx['hotwords'])
             text, lang = result if result is not None else ('', '')
+            if text.strip():
+                # Las correcciones, una vez y sobre todo el texto: lo hecho durante
+                # la reunion y la cola. Con las entradas de ahora, no las del
+                # principio: una sugerencia aprobada durante la reunion ya cuenta.
+                text = transcriber._correct_with_glossary(text, dict(
+                    glossary_ctx, entries=self._glossary_entries(glossary_ctx)))
             if result is not None and not text.strip():
                 # Sin voz: que lo confirme el camino de siempre, que es el que
                 # sabe tratar una grabacion vacia.

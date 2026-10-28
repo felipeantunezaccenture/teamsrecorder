@@ -14,7 +14,6 @@ from datetime import datetime
 import pytest
 
 import glossary as gl
-import live_transcriber as lt
 import minutes_generator as mg
 import transcriber as tr
 
@@ -300,82 +299,9 @@ def test_si_el_glosario_revienta_se_transcribe_igual(monkeypatch, tr_dirs):
     assert tr.transcribe(tr_dirs / 'recordings' / 'a.wav') == ('[00:01] hola', 'es')
 
 
-def test_el_texto_de_la_transcripcion_en_vivo_tambien_se_corrige(monkeypatch, tr_dirs):
-    monkeypatch.setattr(tr, '_finish_live', lambda p, c=None, prog=None: ('[00:01] de Kinexis', 'es'))
-    monkeypatch.setattr(tr, '_transcribe_local',
-                        lambda *a, **k: pytest.fail('no debe transcribir el WAV entero'))
-    monkeypatch.setattr(tr, '_glossary_context', lambda p: {
-        'hotwords': '', 'project_id': None, 'entries': [E('Kinaxis', aliases=['Kinexis'])]})
-
-    assert tr.transcribe(tr_dirs / 'recordings' / 'a.wav')[0] == '[00:01] de Kinaxis'
-
-
-# ── integración con la transcripción en vivo ────────────────────────────────
-
-class _Seg:
-    def __init__(self, s, e, t):
-        self.start, self.end, self.text = s, e, t
-
-
-class _Modelo:
-    def __init__(self):
-        self.kwargs = []
-
-    def transcribe(self, audio, **kw):
-        self.kwargs.append(kw)
-        info = type('I', (), {'language': 'es'})()
-        return iter([_Seg(0.0, 2.0, 'hola')]), info
-
-
-def _wav(path, seconds):
-    import numpy as np
-    import soundfile as sf
-    n = int(seconds * 16000)
-    sf.write(str(path), (0.3 * np.sin(np.arange(n) / 20)).astype('float32'), 16000, subtype='FLOAT')
-    return path
-
-
-def test_la_transcripcion_en_vivo_usa_las_pistas_y_las_guarda(monkeypatch, tr_dirs):
-    m = _Modelo()
-    monkeypatch.setattr(tr, '_get_model', lambda name=None: m)
-    monkeypatch.setattr(tr, '_available_mb', lambda: None)
-    mic = _wav(tr_dirs / 'm.wav', 60)
-    live = lt.LiveTranscript(tr_dirs / 'a.live')
-    live.hotwords_fn = lambda: 'Nurettin Ekizoglu, Kinaxis'
-
-    live.advance(mic, None, final=False)
-
-    assert m.kwargs[0]['hotwords'] == 'Nurettin Ekizoglu, Kinaxis'
-    assert json.loads((tr_dirs / 'a.live').read_text(encoding='utf-8'))['hotwords'] == \
-        'Nurettin Ekizoglu, Kinaxis'
-    assert lt.LiveTranscript.load(tr_dirs / 'a.live').hotwords == 'Nurettin Ekizoglu, Kinaxis'
-
-
-def test_las_pistas_se_calculan_una_sola_vez(monkeypatch, tr_dirs):
-    m = _Modelo()
-    monkeypatch.setattr(tr, '_get_model', lambda name=None: m)
-    monkeypatch.setattr(tr, '_available_mb', lambda: None)
-    llamadas = []
-    live = lt.LiveTranscript(tr_dirs / 'a.live')
-    live.hotwords_fn = lambda: llamadas.append(1) or 'X'
-
-    live.advance(_wav(tr_dirs / 'm.wav', 60), None, final=False)
-    live.advance(_wav(tr_dirs / 'm.wav', 120), None, final=False)
-
-    assert len(llamadas) == 1
-
-
-def test_si_las_pistas_fallan_la_transcripcion_en_vivo_sigue(monkeypatch, tr_dirs):
-    m = _Modelo()
-    monkeypatch.setattr(tr, '_get_model', lambda name=None: m)
-    monkeypatch.setattr(tr, '_available_mb', lambda: None)
-    live = lt.LiveTranscript(tr_dirs / 'a.live')
-    live.hotwords_fn = lambda: (_ for _ in ()).throw(OSError('outlook'))
-
-    live.advance(_wav(tr_dirs / 'm.wav', 60), None, final=False)
-
-    assert 'hotwords' not in m.kwargs[0]
-    assert live.segments['mic']
+# La transcripción durante la reunión (pistas en <stem>.live.hints, el cierre y
+# las correcciones del transcript en vivo) se prueba en test_live_transcriber.py,
+# sección "Glosario", con sus fixtures.
 
 
 # ── integración con las minutas ─────────────────────────────────────────────

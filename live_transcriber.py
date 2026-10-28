@@ -18,6 +18,10 @@ DOS MODOS (no cambiarlo sin leer esto)
 - Al parar, el daemon mata el proceso y cierra con `finish_live`: aprovecha los
   trozos hechos con el modelo aceptado y transcribe solo los huecos y el final.
   Si no hay nada aprovechable, el pipeline transcribe como siempre.
+- El glosario (glossary.py) llega como pistas para Whisper: el daemon escribe
+  <stem>.live.hints al empezar y este proceso las usa en cuanto aparecen; el
+  cierre usa las mismas. Las correcciones del texto las aplica el daemon una
+  sola vez, sobre el transcript entero (tray_app._use_live_transcript).
 
 Por que un proceso aparte: el 16/10/2026 Whisper revento con heap corruption
 (0xC0000374) dentro del daemon. Dentro del proceso que graba, eso corta la reunion.
@@ -127,6 +131,37 @@ def ctl_path(wav: Path) -> Path:
 def finishing_path(wav: Path) -> Path:
     """Intentos de cierre: si sobrevive a un arranque, ese cierre tumbo el daemon."""
     return wav.with_suffix('.live.finishing')
+
+
+def hints_path(wav: Path) -> Path:
+    """Pistas del glosario para Whisper (hotwords): invitados, asunto y terminos."""
+    return wav.with_suffix('.live.hints')
+
+
+def write_hints(wav: Path, hotwords: str) -> None:
+    """Las escribe el daemon al empezar (tray_app._write_live_hints): calcularlas
+    puede consultar Outlook, y este proceso no debe esperar por eso. Atomico: el
+    proceso en vivo las lee en cualquier momento."""
+    tmp = hints_path(wav).with_name(hints_path(wav).name + '.tmp')
+    tmp.write_text(json.dumps({'hotwords': hotwords or ''}, ensure_ascii=False), encoding='utf-8')
+    os.replace(tmp, hints_path(wav))
+
+
+def _load_hints(args: dict, wav: Path) -> bool:
+    """Pone las pistas en args si ya estan. Devuelve si ya no hace falta volver a
+    mirar: estan, o el fichero existe pero no sirve. Sin pistas se transcribe igual."""
+    path = hints_path(wav)
+    if not path.exists():
+        return False
+    try:
+        hotwords = json.loads(path.read_text(encoding='utf-8')).get('hotwords') or ''
+    except (OSError, ValueError, AttributeError) as e:
+        log.warning(f"live: pistas del glosario ilegibles ({e}); sigo sin ellas")
+        return True
+    if hotwords:
+        args['hotwords'] = hotwords
+        log.info("live: pistas del glosario cargadas")
+    return True
 
 
 def part_path(wav: Path, track: str) -> Path:
@@ -721,6 +756,7 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
     mic = tracks[0]
     started = time.monotonic()
     last_growth, last_mic_total, seen_mic = started, -1, False
+    hints_done = False
     while True:
         if wav.exists():
             # El grabador ya cerro los .part: no se vuelven a tocar.
@@ -798,6 +834,8 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
             _write_status(wav, lang=lang)
             log.info(f"live: idioma fijado en '{lang}'")
 
+        if not hints_done:
+            hints_done = _load_hints(args, wav)
         progressed = False
         prof = PROFILES[mode]
         for track in tracks:
@@ -1068,7 +1106,7 @@ def _block_end(f, pos: int, end: int, vad, vad_opts) -> int:
 
 
 def finish_live(wav: Path, on_progress=None, should_cancel=None,
-                should_pause=None) -> tuple[str, str] | None:
+                should_pause=None, hotwords: str | None = None) -> tuple[str, str] | None:
     """Cierra el transcript de una grabacion ya parada con lo hecho durante ella.
 
     Aprovecha los trozos hechos con un modelo aceptado (el de siempre; tambien
@@ -1165,6 +1203,8 @@ def finish_live(wav: Path, on_progress=None, should_cancel=None,
         if model is None:
             raise RuntimeError("cierre sin modelo que quepa en memoria")
         args = _transcribe_args()
+        if hotwords:
+            args['hotwords'] = hotwords
         vad_opts = VadOptions(threshold=0.3, min_silence_duration_ms=500, speech_pad_ms=0)
         try:
             done = 0
@@ -1210,7 +1250,7 @@ def discard_artifacts(wav: Path, tracks: bool = True, parts: bool = False) -> No
       borrado del grabador coincidio con una lectura. La reunion se descarto, y
       ni su audio ni su texto deben quedarse en disco.
     """
-    paths = [jsonl_path(wav), status_path(wav), ctl_path(wav), finishing_path(wav)]
+    paths = [jsonl_path(wav), status_path(wav), ctl_path(wav), finishing_path(wav), hints_path(wav)]
     if tracks:
         paths += [track_wav(wav, 'mic'), track_wav(wav, 'loop')]
     if parts:

@@ -576,6 +576,75 @@ def test_extremo_a_extremo_con_finish_live_real(tray, wav, pipeline, model, me, 
                                  '[00:15] [Felipe]: resto']
 
 
+# ── Glosario ────────────────────────────────────────────────────────────────
+#
+# Las pistas del glosario (invitados, asunto, terminos) llegan a Whisper durante
+# la reunion por <stem>.live.hints, que escribe el daemon, y al cerrar por
+# finish_live. Las correcciones se aplican una vez, sobre el transcript entero.
+
+def test_las_pistas_se_usan_en_cuanto_aparecen(wav):
+    args = {}
+    assert lt._load_hints(args, wav) is False, "sin fichero hay que seguir mirando"
+    lt.write_hints(wav, 'Nurettin Ekizoglu, Kinaxis')
+    assert lt._load_hints(args, wav) is True
+    assert args['hotwords'] == 'Nurettin Ekizoglu, Kinaxis'
+
+
+@pytest.mark.parametrize('contenido', ['{roto', '[]', '{"hotwords": ""}'])
+def test_sin_pistas_utiles_se_transcribe_sin_ellas(wav, contenido):
+    lt.hints_path(wav).write_text(contenido, encoding='utf-8')
+    args = {}
+    assert lt._load_hints(args, wav) is True, "un fichero que no sirve no se vuelve a mirar"
+    assert 'hotwords' not in args
+
+
+def test_el_cierre_pasa_las_pistas_a_whisper(wav, model, me):
+    write_records(wav, rec('mic', 0, 15, (1.0, 'hola')))
+    make_track(lt.track_wav(wav, 'mic'), 20)
+    lt.finish_live(wav, hotwords='Kinaxis')
+    assert model.kwargs and all(k['hotwords'] == 'Kinaxis' for k in model.kwargs)
+
+
+def test_el_cierre_sin_pistas_no_las_inventa(wav, model, me):
+    write_records(wav, rec('mic', 0, 15, (1.0, 'hola')))
+    make_track(lt.track_wav(wav, 'mic'), 20)
+    lt.finish_live(wav)
+    assert model.kwargs and all('hotwords' not in k for k in model.kwargs)
+
+
+def test_el_transcript_en_vivo_sale_corregido_con_el_glosario_de_ahora(tray, wav, pipeline,
+                                                                       monkeypatch, modo_rapido):
+    """Las entradas se releen al cerrar: ctx trae las del principio de la reunion
+    (ninguna) y la del glosario se aprobo durante ella."""
+    import glossary
+    registrados, calls = pipeline
+    write_records(wav, rec('mic', 0, 1, (0.0, 'hola')))
+    visto = {}
+
+    def cierre(*_a, **k):
+        visto.update(k)
+        return '[00:00] hablamos de Kinexis', 'es'
+
+    monkeypatch.setattr(lt, 'finish_live', cierre)
+    monkeypatch.setattr(transcriber, '_glossary_context',
+                        lambda p: {'hotwords': 'Kinaxis', 'project_id': None, 'entries': []})
+    monkeypatch.setattr(glossary, 'entries', lambda project_id=None: [
+        {'term': 'Kinaxis', 'category': 'company', 'aliases': ['Kinexis'], 'meaning': '', 'project': None}])
+
+    tray._run_pipeline_sync(wav)
+
+    assert calls == []
+    assert visto['hotwords'] == 'Kinaxis'
+    assert registrados == [('[00:00] hablamos de Kinaxis', 'es')]
+    assert storage.get_transcript_path(wav).read_text(encoding='utf-8') == '[00:00] hablamos de Kinaxis'
+
+
+def test_descartar_borra_tambien_las_pistas(wav):
+    lt.write_hints(wav, 'X')
+    lt.discard_artifacts(wav, tracks=False)
+    assert not lt.hints_path(wav).exists()
+
+
 # ── Lanzar y parar ──────────────────────────────────────────────────────────
 
 def esperar(cond, timeout=3.0):
@@ -591,6 +660,29 @@ def test_empezar_a_grabar_lanza_el_proceso_en_vivo(tray, wav, live_spawns):
     tray.set_recording(True, wav)
     assert esperar(lambda: live_spawns == [wav])
     tray.set_recording(False)
+
+
+def test_al_empezar_a_grabar_se_escriben_las_pistas_del_glosario(tray, wav, live_spawns, monkeypatch):
+    monkeypatch.setattr(transcriber, '_glossary_context',
+                        lambda p: {'hotwords': 'Kinaxis', 'project_id': None, 'entries': []})
+    tray.set_recording(True, wav)
+    assert esperar(lambda: lt.hints_path(wav).exists())
+    tray.set_recording(False)
+    args = {}
+    assert lt._load_hints(args, wav) and args['hotwords'] == 'Kinaxis'
+
+
+def test_si_las_pistas_fallan_el_proceso_en_vivo_arranca_igual(tray, wav, live_spawns, monkeypatch):
+    """Calcular las pistas puede consultar Outlook: va en su hilo, y si falla o
+    se cuelga, la transcripcion durante la reunion no espera por ellas."""
+    def colgado(_p):
+        time.sleep(5)
+
+    monkeypatch.setattr(transcriber, '_glossary_context', colgado)
+    tray.set_recording(True, wav)
+    assert esperar(lambda: live_spawns == [wav])
+    tray.set_recording(False)
+    assert not lt.hints_path(wav).exists()
 
 
 class FakeProc:
