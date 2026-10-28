@@ -86,6 +86,16 @@ def test_update_noted_consulta_la_puerta_antes_del_pull():
     assert puerta < texto.find('git pull'), "/update-noted hace el pull antes de mirar la puerta"
 
 
+@pytest.mark.unit
+def test_restart_noted_busca_python_con_get_trpython():
+    """Sin .venv cae al Python global (9b4e15a), pero por Get-TRPython:
+    Get-Command python puede devolver el alias de WindowsApps, que abre la
+    Store en vez de arrancar la app."""
+    texto = (REPO / 'scripts' / 'restart_noted.ps1').read_text(encoding='utf-8-sig')
+    assert 'Get-TRPython' in texto, "restart_noted.ps1 busca Python por su cuenta"
+    assert 'Get-Command python' not in texto, "restart_noted.ps1 puede acabar en el alias de WindowsApps"
+
+
 # -- El hook de verdad, con PowerShell ----------------------------------------
 
 def _dobles(raiz: Path, log: Path) -> str:
