@@ -91,6 +91,10 @@ def list_recordings(limit: int = 10) -> list[Path]:
     return files[:limit]
 
 
+# La cabecera de un WAV sin muestras: un .part asi no tiene audio que recuperar.
+_EMPTY_PART_BYTES = 1024
+
+
 def cleanup_old_recordings(days: int = 10):
     cutoff = datetime.now() - timedelta(days=days)
     audio_patterns = ('*.wav', '*.mp3')
@@ -106,8 +110,18 @@ def cleanup_old_recordings(days: int = 10):
                 # del estado en vivo se renombra al momento). Esto corre al
                 # arrancar el daemon: una excepcion aqui lo tumbaria.
                 try:
-                    if datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
-                        f.unlink()
+                    st = f.stat()
+                    if datetime.fromtimestamp(st.st_mtime) >= cutoff:
+                        continue
+                    # Un .part con audio en recordings/ es una reunion que el
+                    # daemon no llego a guardar: recover_orphan_parts la
+                    # convierte en WAV al arrancar, despues de esta limpieza.
+                    # Borrarlo por antiguo la perdia (un portatil apagado mas de
+                    # 10 dias tras quedarse sin bateria). Los vacios (solo la
+                    # cabecera WAV) no son una reunion y se borran.
+                    if d == RECORDINGS_DIR and pattern == '*.part' and st.st_size > _EMPTY_PART_BYTES:
+                        continue
+                    f.unlink()
                 except OSError:
                     pass
 

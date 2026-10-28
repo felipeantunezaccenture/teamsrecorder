@@ -662,3 +662,24 @@ def test_una_grabacion_descartada_no_se_recupera(tr_dirs):
 
     assert not (rec_dir / 'descartada.wav').exists()
     assert not mic.exists() and not loop.exists() and not marca.exists()
+
+def test_la_limpieza_no_se_lleva_un_part_que_aun_se_puede_recuperar(tr_dirs):
+    """cleanup_old_recordings corre al arrancar, antes que recover_orphan_parts:
+    una reunion cortada con el portatil apagado mas de 10 dias se perdia. Los
+    .part vacios (solo la cabecera) si se borran: no son una reunion."""
+    import os
+    import time as _time
+
+    import storage
+    rec_dir = tr_dirs / 'recordings'
+    con_audio = rec_dir / '2026-10-01_10-00_Comite.mic.part'
+    vacio = rec_dir / '2026-10-01_11-00_Nada.mic.part'
+    _part(con_audio, np.full(SAMPLE_RATE, 0.3, dtype=np.float32))
+    _part(vacio, np.zeros(0, dtype=np.float32))
+    viejo = _time.time() - 30 * 86400
+    for p in (con_audio, vacio):
+        os.utime(p, (viejo, viejo))
+
+    storage.cleanup_old_recordings(days=10)
+
+    assert con_audio.exists() and not vacio.exists()
