@@ -430,15 +430,14 @@ def test_la_siguiente_grabacion_no_espera_al_guardado_anterior(tr_dirs):
     def no_abrir_micro(*a, **k):
         raise Parar()
 
+    # Un micro que no abre ya no aborta la grabacion (lo reintenta el vigilante):
+    # se para en la apertura misma, que es hasta donde importa no esperar.
+    rec._open_mic_stream = no_abrir_micro
     t0 = time.monotonic()
-    import sounddevice as sd
-    real = sd.InputStream
-    sd.InputStream = no_abrir_micro
     try:
         with pytest.raises(Parar):
             rec._begin(tr_dirs / 'siguiente.wav')
     finally:
-        sd.InputStream = real
         rec._close_writers()
     assert time.monotonic() - t0 < 5
 
