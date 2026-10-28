@@ -12,8 +12,8 @@ $main = Join-Path $root "main.py"
 # reiniciar a mitad de un procesado.
 . (Join-Path $root 'tr_env.ps1')
 
-# Sin venv, el Python global (9b4e15a). Get-TRPython y no Get-Command python:
-# descarta el alias de WindowsApps, que abre la Store en vez de arrancar nada.
+# Sin venv, el Python global (9b4e15a), buscado con Get-TRPython: descarta el
+# alias de WindowsApps, que abre la Store en vez de arrancar nada.
 $py = Get-TRPython -Root $root
 if (-not $py) {
     Write-Host "  No se encontro Python: ni .venv ni uno instalado." -ForegroundColor Red
