@@ -521,3 +521,84 @@ def test_si_claude_no_arranca_la_pregunta_suelta_lo_dice(monkeypatch):
     monkeypatch.setattr(config, 'get_claude_bin', lambda: 'claude')
     monkeypatch.setattr(qa.subprocess, 'Popen', revienta)
     assert 'politica de ejecucion' in qa.ask(['[00:01] hola'], 'que se dijo')['error']
+
+# ── Los caminos de error, que son los que no se ven ──────────────────────────
+
+class StdinRoto(Stdin):
+    def write(self, s):
+        raise OSError('broken pipe')
+
+    def close(self):
+        raise OSError('broken pipe')
+
+
+def test_si_el_cli_desaparece_con_la_sesion_abierta_lo_dice(cli, monkeypatch):
+    cli['next'].append(SessionProc([turn('a')]))
+    s = qa.Session()
+    monkeypatch.setattr(config, 'get_claude_bin', lambda: None)
+    assert s.ask(LINES, 'x')['error'] == 'no_cli'
+
+
+def test_si_no_se_puede_escribir_en_la_sesion_esta_muerta(cli):
+    proc = SessionProc([turn('a')])
+    proc.stdin = StdinRoto()
+    cli['next'].append(proc)
+    s = qa.Session()
+    assert s.ask(LINES, 'x')['error'] == 'session_dead'
+
+
+def test_una_linea_que_no_es_json_se_salta(cli):
+    class ConBasura(SessionProc):
+        def _line(self, line):
+            if line is not None:
+                self._q.put('esto no es json\n')
+            super()._line(line)
+
+    cli['next'].append(ConBasura([turn('ok')]))
+    s = qa.Session()
+    assert s.ask(LINES, 'x')['text'] == 'ok'
+    s.close()
+
+
+def test_una_sesion_que_revienta_a_mitad_se_cierra_y_no_se_reutiliza(cli, caplog):
+    """Si algo falla a mitad de la respuesta (aqui, quien la pinta), el turno
+    queda a medias en la cola: la sesion no se puede reutilizar."""
+    proc = SessionProc([turn('una respuesta')])
+    cli['next'].append(proc)
+    s = qa.Session()
+
+    def pinta(_texto):
+        raise RuntimeError('la vista se cerro')
+
+    assert s.ask(LINES, 'x', on_text=pinta, timeout=2)['error'] == 'session_dead'
+    assert 'la vista se cerro' in caplog.text and proc.stdin.closed
+
+
+def test_cerrar_una_sesion_que_no_responde_la_mata(cli):
+    class NoCierra(SessionProc):
+        def wait(self, timeout=None):
+            raise qa.subprocess.TimeoutExpired('claude', timeout)
+
+    proc = NoCierra([])
+    proc.stdin = StdinRoto()
+    cli['next'].append(proc)
+    s = qa.Session()
+    s.close()
+    assert proc.returncode == -9
+
+
+def test_el_resumen_de_una_reunion_enorme_se_queda_con_el_principio(cli, monkeypatch):
+    """El principio dice de que va la reunion."""
+    monkeypatch.setattr(qa, 'MAX_TRANSCRIPT_CHARS', 40)
+    proc = OneShot(turn('TITULO: Taller\nSe preparo.'))
+    cli['next'].append(proc)
+    assert qa.summarize('\n'.join(LINES)) is not None
+    assert LINES[0] in proc.stdin.data and LINES[-1] not in proc.stdin.data
+
+
+def test_una_vez_aguanta_un_proceso_que_muere_antes_de_leer_y_lineas_basura(cli):
+    proc = OneShot(turn('ok'))
+    proc.stdin = StdinRoto()
+    proc.stdout = iter(['no es json\n'] + [json.dumps(e) + '\n' for e in turn('ok')])
+    cli['next'].append(proc)
+    assert qa.ask(LINES, 'x')['text'] == 'ok'
