@@ -77,6 +77,7 @@ _STR = {
         disk_full_reserve='Disco lleno: Noted ha liberado su reserva de {released:.0f} GB y guarda el audio en memoria hasta que haya espacio. Libera espacio.',
         disk_recovered='Hay espacio otra vez: el audio está guardado completo.',
         deferred='En pausa: se está grabando otra reunión y falta disco o memoria. Sigue al colgar.',
+        deferred_live='En pausa: la reunión en curso se está transcribiendo en vivo. Sigue al colgar.',
         write_failed='Noted no puede escribir el audio (¿un archivo bloqueado?). Lo guarda en memoria y lo reintenta.',
         save_failed='No se pudo guardar la grabación. El audio se conserva en recordings (archivos .part): revisa el log.',
         disk_low='Queda poco espacio en disco ({gb:.1f} GB). Noted sigue grabando.',
@@ -118,6 +119,7 @@ _STR = {
         disk_full_reserve='Disk full: Noted released its {released:.0f} GB reserve and keeps the audio in memory until there is space. Free up some space.',
         disk_recovered='Disk space is back: the audio is fully saved.',
         deferred='Paused: another meeting is recording and disk or memory is low. It continues after the call.',
+        deferred_live='Paused: the current meeting is being transcribed live. It continues after the call.',
         write_failed='Noted cannot write the audio (a locked file?). It keeps it in memory and retries.',
         save_failed='The recording could not be saved. The audio is kept in recordings (.part files): check the log.',
         disk_low='Low disk space ({gb:.1f} GB left). Noted keeps recording.',
@@ -454,18 +456,26 @@ class TrayApp:
         en vivo (_live_priority)."""
         if self._defer_reason() is not None:
             return _DEFER
-        return self._live_priority()
+        if not self._live_priority():
+            return False
+        # Con el modelo ya cargado, pausar seria tenerlo cargado (4,7 GB de
+        # reserva) junto al del en vivo toda la reunion: se aparta, lo suelta y
+        # sigue al colgar. Sin el modelo, la pausa de siempre.
+        import transcriber
+        return _DEFER if transcriber._model is not None else True
 
     def _defer_reason(self) -> str | None:
-        """'disco' o 'memoria' si se esta grabando una reunion y la transcripcion
-        de otra ya terminada debe apartarse; None si no.
+        """'disco' o 'memoria' si se esta grabando una reunion, o guardando la que
+        acaba de terminar, y la transcripcion de otra ya terminada debe
+        apartarse; None si no. Guardando tambien: con el disco lleno el guardado
+        espera sitio con el audio en memoria, y cargar 'medium' se lo quitaria.
 
         26/10/2026, decision de Felipe: grabar va antes que todo. Ese dia, a las
         16:06, el daemon terminaba con 'medium' la reunion anterior mientras
         grababa la siguiente, y el pagefile lleno el disco. Los umbrales son los
         del modo de fondo (live_transcriber): sin el modelo cargado, lo que pide
         su reserva; ya cargado, los suelos. Sin grabacion, nunca se aparta."""
-        if not getattr(self._recorder, 'is_recording', False):
+        if not self._recording_or_saving():
             return None
         try:
             import live_transcriber
@@ -920,8 +930,10 @@ class TrayApp:
 
     def _run_pipeline_until_done(self, wav_path: Path):
         """_run_pipeline_sync; si se aparta por una grabacion (TranscriptionDeferred),
-        espera a que la grabacion termine y lo repite desde lo hecho: el .partial o
-        el .live.jsonl. No reintenta antes: cada intento paga una carga del modelo
+        espera a que la grabacion termine y lo repite desde lo hecho: el .partial
+        (transcripcion por trozos) o el .live.jsonl (cierre de lo hecho en vivo).
+        Con las dos pistas (diarizada) no hay .partial: esa transcripcion vuelve a
+        empezar. Se pierde tiempo, no texto. No reintenta antes: cada intento paga una carga del modelo
         (30-60 s, el pico de memoria) y, si volviera a apartarse antes de cerrar un
         trozo, no avanzaria (revision del 26/10/2026)."""
         import gc
@@ -936,11 +948,16 @@ class TrayApp:
             self._wait_while_deferred(wav_path)
 
     def _wait_while_deferred(self, wav_path: Path):
-        reason = self._defer_reason() or 'disco o memoria'
-        log.warning(f"Transcripción de {wav_path.name} en pausa: se está grabando otra reunión "
-                    f"y falta {reason}. Sigue al colgar")
+        reason = self._defer_reason()
         s = _STR.get(get_ui_language(), _STR['en'])
-        self.set_processing(s['deferred'])
+        if reason is None and self._live_priority():
+            log.warning(f"Transcripción de {wav_path.name} en pausa: la reunión en curso va en vivo. "
+                        f"Sigue al colgar")
+            self.set_processing(s['deferred_live'])
+        else:
+            log.warning(f"Transcripción de {wav_path.name} en pausa: se está grabando otra reunión "
+                        f"y falta {reason or 'disco o memoria'}. Sigue al colgar")
+            self.set_processing(s['deferred'])
         # La transcripcion de fondo de la reunion en curso recupera el modelo: con
         # sus propios umbrales decide si puede transcribir mientras tanto.
         self._release_whisper(force=True)
@@ -1641,6 +1658,15 @@ class TrayApp:
         # que queda por descartar es el trabajo del pipeline.
         if self._recorder.is_recording:
             path = self._recording_path
+            # La marca, antes que nada: si los .part no se dejan borrar (el proceso
+            # en vivo aun leyendolos, un antivirus), recover_orphan_parts los
+            # borraria en el siguiente arranque en vez de recuperar la reunion.
+            marker = path.with_suffix('.discarded') if path is not None else None
+            if marker is not None:
+                try:
+                    marker.touch()
+                except OSError as e:
+                    log.warning(f"No se pudo marcar la grabacion descartada: {e}")
             # cancel() primero: es lo que deja sin efecto un stop() simultaneo.
             # Despues el proceso en vivo, esperando a que muera, y se borra lo
             # que dejo: su texto y los .part, por si el borrado de cancel()
@@ -1651,6 +1677,8 @@ class TrayApp:
                 try:
                     import live_transcriber
                     live_transcriber.discard_artifacts(path, parts=True)
+                    if not any(live_transcriber.part_path(path, t).exists() for t in live_transcriber.TRACKS):
+                        marker.unlink(missing_ok=True)
                 except Exception as e:
                     log.warning(f"No se pudo limpiar la transcripcion en vivo descartada: {e}")
             self.set_recording(False)

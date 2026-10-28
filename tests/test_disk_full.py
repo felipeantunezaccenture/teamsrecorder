@@ -646,3 +646,19 @@ def test_uno_que_espera_disco_no_deja_al_pipeline_en_pausa(tr_dirs):
 def test_un_modelo_pequeno_no_se_carga_y_suelta_en_bucle(monkeypatch):
     _free, need = live_transcriber._disk_free_and_need('tiny')
     assert need > live_transcriber.DISK_FLOOR_GB
+
+def test_una_grabacion_descartada_no_se_recupera(tr_dirs):
+    """Si al descartarla no se pudieron borrar sus .part (el proceso en vivo
+    leyendolos, un antivirus), el siguiente arranque no la reconstruye: la
+    transcribiria y la mandaria a Claude aunque se pidio no guardarla."""
+    rec_dir = tr_dirs / 'recordings'
+    mic, loop = rec_dir / 'descartada.mic.part', rec_dir / 'descartada.loop.part'
+    _part(mic, np.full(SAMPLE_RATE, 0.3, dtype=np.float32))
+    _part(loop, np.full(SAMPLE_RATE, 0.2, dtype=np.float32))
+    marca = rec_dir / 'descartada.discarded'
+    marca.touch()
+
+    assert AudioRecorder().recover_orphan_parts(rec_dir) == []
+
+    assert not (rec_dir / 'descartada.wav').exists()
+    assert not mic.exists() and not loop.exists() and not marca.exists()

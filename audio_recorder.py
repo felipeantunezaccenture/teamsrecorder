@@ -900,6 +900,16 @@ class AudioRecorder:
             out = directory / f'{stem}.wav'
             if stem in busy:
                 continue
+            marker = directory / f'{stem}.discarded'
+            if marker.exists():
+                # Descartada mientras se grababa (tray_app._cancel_recording) y no
+                # se pudieron borrar sus .part: el audio no se recupera, se borra.
+                # Recuperarlo la transcribiria y la mandaria a Claude.
+                self._discard_temp(mic, loop)
+                if not mic.exists() and not loop.exists():
+                    marker.unlink(missing_ok=True)
+                log.info(f"Temporales de una grabacion descartada, borrados: {stem}")
+                continue
             if (directory / 'processed' / out.name).exists():
                 continue
             try:
