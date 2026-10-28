@@ -484,7 +484,11 @@ def _glossary_context(audio_path: Path) -> dict:
 def _correct_with_glossary(text: str, ctx: dict) -> str:
     try:
         import glossary
-        fixed = glossary.apply_corrections(text, ctx['entries'])
+        # Las entradas de ahora, no las del contexto: recording_context se
+        # cachea al empezar a grabar, y una sugerencia aprobada durante la
+        # reunion tiene que contar. Sin ninguna, las del contexto.
+        entries = glossary.entries(ctx.get('project_id')) or ctx['entries']
+        fixed = glossary.apply_corrections(text, entries)
         if fixed != text:
             log.info("Glosario: transcript corregido")
         return fixed
