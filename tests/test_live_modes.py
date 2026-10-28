@@ -791,3 +791,20 @@ def test_en_vivo_a_mitad_se_lanza_ya_y_desde_ahora(wav, monkeypatch):
     REAL_LIVE_SPAWN(wav, mode='live', mid_meeting=True)
     assert time.monotonic() - t0 < 5
     assert lt.FROM_NOW_ARG in cmds[0]
+
+def test_el_proceso_usa_las_pistas_del_glosario(proceso, wav, monkeypatch):
+    """Si _run no las cargara (_load_hints), ningun trozo hecho durante la
+    reunion llevaria las pistas, y los de medium son los que se guardan."""
+    vistos = []
+    real_step = lt._step
+
+    def step(track, model, lang, args, *a, **k):
+        vistos.append(args.get('hotwords'))
+        return real_step(track, model, lang, args, *a, **k)
+
+    monkeypatch.setattr(lt, '_step', step)
+    proceso.partes(5)
+    lt.write_ctl(wav, mode='background', gate='free')
+    lt.write_hints(wav, 'Kinaxis')
+    proceso.arrancar()
+    assert proceso.hasta(lambda: 'Kinaxis' in vistos)

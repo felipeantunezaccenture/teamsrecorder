@@ -1295,3 +1295,12 @@ def test_el_proceso_aparte_escribe_su_propio_log(tr_dirs):
         for h in [h for h in raiz.handlers if h not in antes]:
             raiz.removeHandler(h)
             h.close()
+
+def test_el_cierre_dice_cuanto_lleva_de_lo_que_queda(wav, model, me):
+    """La tarjeta "En curso" muestra el % del cierre: de 0 a 100 sobre lo que
+    queda por transcribir, no sobre la reunion entera."""
+    write_records(wav, rec('mic', 0, 15, (1.0, 'hola')))
+    make_track(lt.track_wav(wav, 'mic'), 20)
+    vistos = []
+    lt.finish_live(wav, on_progress=vistos.append)
+    assert vistos and vistos[-1] == 100 and vistos == sorted(vistos)
