@@ -66,3 +66,73 @@ def test_cerrar_un_panel_no_borra_el_pid_de_otro(tr_dirs):
     assert pid_file.read_text(encoding='utf-8') == '111'
     aw._release_pid_file(pid_file, 111)
     assert not pid_file.exists()
+
+
+# -- Lo que se ve desde fuera: traer el panel delante, y cuando no se puede ---
+
+@pytest.mark.parametrize('focus, enfocadas', [(True, [1]), (False, [])])
+def test_con_un_panel_abierto_se_le_manda_la_ruta_y_solo_se_trae_delante_si_se_pide(
+        tr_dirs, monkeypatch, focus, enfocadas):
+    """focus=False (77140da): al terminar las minutas, la ruta va al panel ya
+    abierto pero no se le pone delante de lo que se este haciendo."""
+    import os
+    vistas = []
+    monkeypatch.setattr(aw, '_focus_existing_window', lambda: vistas.append(1))
+    (aw.PROJECT_DIR / '.app_window.pid').write_text(str(os.getpid()), encoding='utf-8')
+
+    aw.open_app('C:/minutes/20261026_0900_Comite.md', focus=focus)
+
+    assert (aw.PROJECT_DIR / '.app_navigate.txt').read_text(encoding='utf-8') == 'C:/minutes/20261026_0900_Comite.md'
+    assert vistas == enfocadas
+
+
+class _User32:
+    def __init__(self, hwnd):
+        self.hwnd, self.llamadas = hwnd, []
+
+    def FindWindowW(self, _cls, titulo):
+        self.llamadas.append(('find', titulo))
+        return self.hwnd
+
+    def ShowWindow(self, hwnd, cmd):
+        self.llamadas.append(('show', hwnd, cmd))
+
+    def SetForegroundWindow(self, hwnd):
+        self.llamadas.append(('front', hwnd))
+
+
+@pytest.mark.parametrize('hwnd', [123, 0], ids=['abierto', 'no_encontrado'])
+def test_traer_el_panel_delante(monkeypatch, hwnd):
+    import types
+    user32 = _User32(hwnd)
+    monkeypatch.setattr(aw.os, 'name', 'nt')
+    monkeypatch.setattr(ctypes, 'windll', types.SimpleNamespace(user32=user32), raising=False)
+    aw._focus_existing_window()
+    if hwnd:
+        assert user32.llamadas == [('find', 'Noted'), ('show', 123, 9), ('front', 123)]
+    else:
+        assert user32.llamadas == [('find', 'Noted')]
+
+
+@pytest.mark.parametrize('falla', ['sin_handle', 'excepcion'])
+def test_si_el_mutex_no_se_puede_crear_se_abre_el_panel(monkeypatch, falla):
+    """Mejor abrir de mas que no abrir: sin mutex no se sabe si hay otro panel."""
+    class CreateMutexW:
+        """Como una funcion de ctypes: admite que se le pongan restype y argtypes."""
+
+        def __call__(self, *_a):
+            if falla == 'excepcion':
+                raise OSError('sin permisos')
+            return 0
+
+    class Kernel32:
+        def __init__(self):
+            self.CreateMutexW = CreateMutexW()
+
+    monkeypatch.setattr(ctypes, 'WinDLL', lambda *_a, **_k: Kernel32(), raising=False)
+    monkeypatch.setattr(aw.os, 'name', 'nt')
+    assert aw._claim_single_window() is True
+
+
+def test_cerrar_un_panel_sin_pid_no_lanza(tr_dirs):
+    aw._release_pid_file(aw.PROJECT_DIR / '.app_window.pid', 111)
