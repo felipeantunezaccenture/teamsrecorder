@@ -242,6 +242,15 @@ def sin_outlook_de_verdad(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def sin_claude_de_verdad(monkeypatch):
+    """Ningun test pregunta al claude de la maquina si tiene sesion (`claude
+    auth status`, al fallar unas minutas): la respuesta dependeria de quien
+    corre la suite. Los tests de claude_problem usan la funcion real."""
+    import minutes_generator
+    monkeypatch.setattr(minutes_generator, 'claude_problem', lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def cierre_sin_errores_ocultos(caplog):
     """Un error dentro de _finalize_session vuelve a ser un fallo del test.
 
@@ -300,6 +309,7 @@ def tray_factory(tr_dirs):
         app._whisper_lock = threading.Lock()
         app._ctl_lock = threading.RLock()
         app._yield_seq = 0
+        app._pending_retries = {}
         return app
 
     return make

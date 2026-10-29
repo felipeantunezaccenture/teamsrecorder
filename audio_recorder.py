@@ -192,7 +192,9 @@ class AudioRecorder:
         """Algun WAV se esta guardando (o esperando sitio en el disco)."""
         return not self._save_event.is_set()
 
-    def start(self, output_path: Path):
+    def start(self, output_path: Path) -> bool:
+        """False si ya se estaba grabando: no se abre otra grabacion encima.
+        Quien llama no debe tratar output_path como la grabacion en curso."""
         # Reservar el flag ANTES de cualquier espera. Con la comprobación y la
         # asignación separadas por el wait() de abajo, dos llamadas casi
         # simultáneas pasaban las dos el "if" y abrían cada una su InputStream y
@@ -203,7 +205,7 @@ class AudioRecorder:
         # InputStream (~1 s) soltaba los writers y dejaba un stream sin cerrar.
         with self._start_lock:
             if self._recording:
-                return
+                return False
             self._recording = True
             try:
                 self._begin(output_path)
@@ -213,6 +215,7 @@ class AudioRecorder:
                 self._writer_abort.set()
                 self._close_writers()
                 raise
+        return True
 
     def _begin(self, output_path: Path):
         # El guardado de la reunion anterior ya no se espera: tiene sus propias

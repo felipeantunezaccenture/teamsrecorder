@@ -98,7 +98,8 @@ def _handle_cli_command(cmd, recorder, tray, get_recording_path):
     if cmd in ('start', 'start-live') and not recorder.is_recording:
         path = get_recording_path('cli')
         recorder.on_recording_stopped = tray._on_recording_done
-        recorder.start(path)
+        if recorder.start(path) is False:
+            return      # ya se grababa (ver AudioRecorder.start)
         tray.set_recording(True, path, mode='live' if cmd == 'start-live' else 'background')
         log.info("Grabación iniciada por CLI")
     elif cmd == 'live' or cmd.startswith('live '):
@@ -202,10 +203,18 @@ def main():
                         tray.request_continuation()
                     path = get_recording_path(meeting)
                     try:
-                        recorder.start(path)
+                        started = recorder.start(path)
                     except Exception as e:
                         log.error(f"No se pudo iniciar la grabación: {e}")
                         tray.warn_mic_unavailable(str(e))
+                        return
+                    if started is False:
+                        # Ya se grababa ("Grabar ahora" mientras salia este aviso).
+                        # El 28/10/2026 se trato path como la grabacion en curso: el
+                        # panel mostro otra reunion y se lanzo un segundo transcript
+                        # en vivo de un audio que no existia. El nombre de la reunion
+                        # lo recoge la grabacion en curso (tray._note_teams_title).
+                        log.info(f"Ya se estaba grabando: no se abre otra grabación para '{meeting}'")
                         return
                     tray.set_recording(True, path, mode=mode)
                     log.info(f"{'Continuando (reconexión)' if continuing else 'Grabación iniciada'}"

@@ -102,7 +102,8 @@ def cleanup_old_recordings(days: int = 10):
     # convierte en WAV). *.live.*: restos de la transcripcion en vivo
     # (.live.jsonl, .live.json, su .tmp y .live.finishing) cuando no se usaron.
     # *.live: el formato de la transcripcion en vivo anterior, que esta sustituye.
-    aux_patterns   = ('*.lang', '*.partial', '*.context', '*.part', '*.live.*', '*.live')
+    # *.title: el nombre de Teams de una grabacion manual (tray_app._note_teams_title).
+    aux_patterns   = ('*.lang', '*.partial', '*.context', '*.part', '*.live.*', '*.live', '*.title')
     for d in (RECORDINGS_DIR, RECORDINGS_DIR / 'processed'):
         for pattern in audio_patterns + aux_patterns:
             for f in d.glob(pattern):
