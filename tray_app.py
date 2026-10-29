@@ -19,6 +19,14 @@ from transcriber import TranscriptionDeferred as _Deferred
 _CANCEL_FILE = PROJECT_DIR / '.cancelled_jobs.txt'
 
 
+def _slug_title(slug: str) -> str:
+    """Titulo legible de la parte del nombre de fichero tras la fecha. Solo se
+    pone en mayuscula la primera letra: .title() minusculizaba el resto y
+    convertia IBP en Ibp y RACI en Raci."""
+    t = slug.replace('_', ' ').strip()
+    return t[:1].upper() + t[1:]
+
+
 def _read_cancel_signals() -> set[str]:
     try:
         if _CANCEL_FILE.exists():
@@ -309,7 +317,7 @@ class TrayApp:
             elapsed = int(time.time() - self._recording_start)
             m, s = divmod(elapsed, 60)
             _rm = _re.match(r'\d{4}-\d{2}-\d{2}_(\d{2})-(\d{2})(?:_(.+))?', rec_path.stem) if rec_path else None
-            _rtitle = _rm.group(3).replace('_', ' ').title() if (_rm and _rm.group(3)) else None
+            _rtitle = _slug_title(_rm.group(3)) if (_rm and _rm.group(3)) else None
             _rtime  = f"{_rm.group(1)}:{_rm.group(2)}" if _rm else None
             jobs.append({'stage': 'recording', 'label': f'Recording {m:02d}:{s:02d}', 'elapsed': elapsed, 'pct': None,
                          'title': _rtitle, 'time': _rtime, 'step': 0, 'total_steps': 3, 'step_label': 'Grabando'})
@@ -921,7 +929,7 @@ class TrayApp:
                         log.warning(f"_discard_job move {f.name}: {e}")
 
             m = re.match(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:_(.+))?', stem)
-            title = (m.group(6).replace('_', ' ').title() if (m and m.group(6)) else stem)
+            title = (_slug_title(m.group(6)) if (m and m.group(6)) else stem)
             (trash_dir / '_trash_meta.json').write_text(json.dumps({
                 'stem':       stem,
                 'title':      title,
@@ -1033,7 +1041,7 @@ class TrayApp:
 
         _m = re.match(r'\d{4}-\d{2}-\d{2}_(\d{2})-(\d{2})(?:_(.+))?', wav_path.stem)
         _job_time  = f"{_m.group(1)}:{_m.group(2)}" if _m else ''
-        _job_title = _m.group(3).replace('_', ' ').title() if (_m and _m.group(3)) else wav_path.stem
+        _job_title = _slug_title(_m.group(3)) if (_m and _m.group(3)) else wav_path.stem
         # 'stem' viaja hasta .pipeline_status.json para que la ventana web sepa
         # qué trabajo está cancelando.
         self._current_job = {'stem': wav_path.stem, 'title': _job_title, 'time': _job_time,
@@ -1409,7 +1417,7 @@ class TrayApp:
 
         _mj = re.match(r'\d{4}-\d{2}-\d{2}_(\d{2})-(\d{2})(?:_(.+))?', wav_path.stem)
         self._current_job = {
-            'title': (_mj.group(3).replace('_', ' ').title() if (_mj and _mj.group(3)) else wav_path.stem),
+            'title': (_slug_title(_mj.group(3)) if (_mj and _mj.group(3)) else wav_path.stem),
             'time': f"{_mj.group(1)}:{_mj.group(2)}" if _mj else '',
             'step': 2, 'total_steps': 3, 'step_label': 'Generando minutas', 'step_started': time.time(),
         }

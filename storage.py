@@ -146,7 +146,10 @@ def cleanup_old_recordings(days: int = 10):
                     # por antiguo seria perder la reunion, y su .context (lo que
                     # escribio el usuario) o su .partial, rehacerla peor. Hasta el
                     # tope de PENDING_RETENTION_FACTOR. Lo de processed/ ya la tiene.
-                    if d == RECORDINGS_DIR and mtime >= pending_cutoff and not _has_minutes(f):
+                    # Un .part vacio no es una reunion pendiente: ya se decidio
+                    # arriba (se borra), aunque este dentro del tope.
+                    if (d == RECORDINGS_DIR and pattern != '*.part'
+                            and mtime >= pending_cutoff and not _has_minutes(f)):
                         continue
                     f.unlink()
                 except OSError:
