@@ -43,3 +43,21 @@ def test_la_ultima_escritura_del_ticker_no_deja_la_grabacion_en_curso(tray, tr_d
 
     jobs = json.loads((tr_dirs / '.pipeline_status.json').read_text(encoding='utf-8'))['jobs']
     assert jobs == [], f"se quedo una grabacion que ya no existe: {jobs}"
+
+
+def test_el_constructor_crea_el_lock(monkeypatch):
+    """tray_factory no pasa por __init__; este test si, sin arrancar sus hilos."""
+    import tray_app as ta
+
+    class SinArrancar:
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(ta.threading, 'Thread', SinArrancar)
+    monkeypatch.setattr(ta.TrayApp, '_start_daily_brain_scan', lambda self: None, raising=False)
+    app = ta.TrayApp(recorder=None, detector=None)
+    assert app._status_lock.acquire(blocking=False)
+    app._status_lock.release()
