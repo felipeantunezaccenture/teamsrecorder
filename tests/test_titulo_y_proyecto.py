@@ -207,6 +207,18 @@ def test_sin_outlook_no_hay_asunto():
     assert os_mod.find_meeting_subject(AHORA) is None
 
 
+def test_descartar_la_grabacion_borra_su_titulo(tray):
+    """Una grabacion descartada no llega al cierre, que es quien recoge el .title:
+    el 29/10/2026 se quedo uno suelto en recordings/."""
+    wav = ta.RECORDINGS_DIR / f'{STEM}.wav'
+    titulo = wav.with_suffix('.title')
+    titulo.write_text('Revision semanal', encoding='utf-8')
+    tray._recorder = type('R', (), {'is_recording': True, 'cancel': lambda self: None})()
+    tray._recording_path = wav
+    tray._cancel_recording()
+    assert not titulo.exists()
+
+
 # ── 2. El proyecto sin Claude ────────────────────────────────────────────────
 
 @pytest.mark.parametrize('titulo, proyecto', [
