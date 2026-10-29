@@ -5814,7 +5814,7 @@ async function updatePipelineFooter() {
         liveHtml += `<button class="btn btn-ghost btn-sm pipeline-job-live" data-stem="${escHtml(j.live_stem)}"
                  onclick="openLiveModal(this.dataset.stem)">${escHtml(t(j.mode === 'live' ? 'live_open' : 'live_open_bg'))}</button>`;
       }
-      const liveDeferred = ['waiting_memory'].includes(j.live_state);
+      const liveDeferred = ['waiting_memory', 'waiting_disk'].includes(j.live_state);
       if (j.mode && j.mode !== 'live' && j.rec_stem && !liveDeferred) {
         liveHtml += `<button class="btn btn-ghost btn-sm pipeline-job-live" data-stem="${escHtml(j.rec_stem)}"
                  title="${escHtml(t('live_switch_tip'))}"
