@@ -52,7 +52,6 @@ _WEB_DIR = Path(__file__).parent / 'web'
 # Instancia global de la ventana (singleton)
 
 _window = None
-_single_mutex = None   # handle del mutex que impide una segunda ventana
 
 _window_lock = threading.Lock()
 
@@ -4509,23 +4508,9 @@ def open_app(initial_path: str = None, focus: bool = True):
 
                 nav_file.write_text(initial_path or '', encoding='utf-8')
 
-                if focus and os.name == 'nt':
+                if focus:
 
-                    try:
-
-                        import ctypes
-
-                        hwnd = ctypes.windll.user32.FindWindowW(None, 'Noted')
-
-                        if hwnd:
-
-                            ctypes.windll.user32.ShowWindow(hwnd, 9)
-
-                            ctypes.windll.user32.SetForegroundWindow(hwnd)
-
-                    except Exception:
-
-                        pass
+                    _focus_existing_window()
 
                 return
 
@@ -4600,40 +4585,75 @@ def _set_taskbar_icon(title: str, icon_path: str) -> None:
 
 
 
+# Un solo panel. 26/10/2026: un doble clic en el icono de la bandeja abria dos
+# (pystray lanza "Abrir la aplicacion" en cada WM_LBUTTONUP, y .app_window.pid
+# aun no existia). Mutex con nombre: el patron estandar de Windows, el mismo
+# que usa main.py para el daemon.
+_WINDOW_MUTEX = 'Noted_AppWindow'
+_WINDOW_MUTEX_HANDLE = None
+
+
+def _claim_single_window() -> bool:
+    """True si este proceso es el unico panel. Si no se puede saber, True:
+    mejor abrir de mas que no abrir."""
+    global _WINDOW_MUTEX_HANDLE
+    if os.name != 'nt':
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        handle = k32.CreateMutexW(None, False, _WINDOW_MUTEX)
+        if not handle:
+            return True
+        _WINDOW_MUTEX_HANDLE = handle            # vive lo que viva el proceso
+        return ctypes.get_last_error() != 183    # ERROR_ALREADY_EXISTS
+    except Exception:
+        return True
+
+
+def _focus_existing_window() -> None:
+    if os.name != 'nt':
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.user32.FindWindowW(None, 'Noted')
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 9)        # SW_RESTORE
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def _release_pid_file(pid_file: Path, pid: int) -> None:
+    """Al cerrar, borrar el .app_window.pid solo si es el nuestro: con dos
+    paneles, cerrar uno lo borraba y cada clic siguiente abria otro mas."""
+    try:
+        if pid_file.read_text(encoding='utf-8').strip() == str(pid):
+            pid_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _run_window(initial_path: str = None):
     """Punto de entrada cuando se ejecuta como proceso independiente."""
-    global _window, _single_mutex
-
-    # Exclusion atomica: el .pid solo se escribe tras cargar webview, y dos
-    # open_app() seguidos (dos minutas que terminan a la vez, un clic en la
-    # bandeja) lanzaban dos ventanas antes de que la primera lo escribiera.
-    if os.name == 'nt':
-        try:
-            import ctypes
-            import sys
-            _k32 = ctypes.WinDLL('kernel32', use_last_error=True)
-            _k32.CreateMutexW.restype = ctypes.c_void_p
-            _single_mutex = _k32.CreateMutexW(None, False, r'Local\Noted.AppWindow')
-            if ctypes.get_last_error() == 183:   # ERROR_ALREADY_EXISTS
-                if initial_path:
-                    (PROJECT_DIR / '.app_navigate.txt').write_text(initial_path, encoding='utf-8')
-                hwnd = ctypes.windll.user32.FindWindowW(None, 'Noted')
-                if hwnd:
-                    ctypes.windll.user32.ShowWindow(hwnd, 9)
-                    ctypes.windll.user32.SetForegroundWindow(hwnd)
-                sys.exit(0)
-        except SystemExit:
-            raise
-        except Exception:
-            pass
-
+    global _window
+    if not _claim_single_window():
+        # Ya hay un panel: que vaya a esta reunion (lo lee de .app_navigate.txt)
+        # y se ponga delante. Sin cargar pywebview ni abrir ventana.
+        (PROJECT_DIR / '.app_navigate.txt').write_text(initial_path or '', encoding='utf-8')
+        _focus_existing_window()
+        return
     import webview
     _cleanup_old_tmp_dirs()
 
     pid_file = PROJECT_DIR / '.app_window.pid'
     pid_file.write_text(str(os.getpid()), encoding='utf-8')
     import atexit
-    atexit.register(lambda: pid_file.unlink(missing_ok=True))
+    _my_pid = os.getpid()
+    atexit.register(lambda: _release_pid_file(pid_file, _my_pid))
 
     if os.name == 'nt':
         try:

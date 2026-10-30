@@ -475,80 +475,59 @@
 
 
 
-        <!-- Modelo de transcripción -->
-
-        <div class="settings-card">
-
-          <div class="settings-card-title" data-i18n="recording_title">Grabación y Transcripción</div>
-
-          <div class="settings-card-desc" data-i18n="whisper_desc">Modelo Whisper para transcribir el audio. Más grande = más preciso pero más lento. Se aplica al reiniciar.</div>
-
-          <select id="whisper-model-select" class="settings-select" onchange="saveWhisperModel(this.value)">
-
-            <option value="tiny">tiny</option>
-
-            <option value="base">base</option>
-
-            <option value="small">small</option>
-
-            <option value="medium" selected>medium</option>
-
-            <option value="large-v3">large-v3</option>
-
-          </select>
-
-        </div>
-
-        <!-- Transcripción en vivo -->
-        <div class="settings-card">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;">
-            <div class="settings-card-title" data-i18n="live_setting_label">Transcribir durante la reunión</div>
-            <label class="pill-toggle" id="toggle-background">
-              <input type="checkbox" id="background-enabled" onchange="saveBackgroundEnabled(this.checked)">
-              <span class="pill-toggle-track"></span>
-            </label>
+        <!-- Transcripción, minutas y preguntas (una sola caja) -->
+        <div class="settings-card settings-card--wide">
+          <div class="settings-card-title" data-i18n="meeting_card_title">Transcripción, minutas y preguntas</div>
+          <div class="settings-card-desc" data-i18n="meeting_card_desc"></div>
+          <div class="sc-row">
+            <div class="sc-text">
+              <div class="sc-label"><span data-i18n="whisper_label"></span><span class="sc-info" data-i18n-title="whisper_desc">ⓘ</span></div>
+              <div class="sc-hint" data-i18n="whisper_short"></div>
+            </div>
+            <div class="sc-ctl"><select id="whisper-model-select" class="settings-select" onchange="saveWhisperModel(this.value)">
+              <option value="tiny">tiny</option>
+              <option value="base">base</option>
+              <option value="small">small</option>
+              <option value="medium" selected>medium</option>
+              <option value="large-v3">large-v3</option>
+            </select></div>
           </div>
-          <div class="settings-card-desc" data-i18n="live_setting_desc">Mientras grabas, se va transcribiendo para que al colgar quede poco.</div>
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin:14px 0 5px;">
-            <div class="settings-card-title" data-i18n="live_final_label">En modo en vivo, guardar el transcript en vivo como definitivo</div>
-            <label class="pill-toggle" id="toggle-live-final">
-              <input type="checkbox" id="live-final-enabled" onchange="saveLiveFinalEnabled(this.checked)">
-              <span class="pill-toggle-track"></span>
-            </label>
+          <div class="sc-row">
+            <div class="sc-text">
+              <div class="sc-label"><span data-i18n="live_final_short_label"></span><span class="sc-info" data-i18n-title="live_final_desc">ⓘ</span></div>
+              <div class="sc-hint" data-i18n="live_final_short"></div>
+            </div>
+            <div class="sc-ctl"><label class="pill-toggle" id="toggle-live-final"><input type="checkbox" id="live-final-enabled" onchange="saveLiveFinalEnabled(this.checked)"><span class="pill-toggle-track"></span></label></div>
           </div>
-          <div class="settings-card-desc" data-i18n="live_final_desc">Más rápido, menos preciso.</div>
-        </div>
-
-        <!-- Después de la reunión: minutas y acciones -->
-        <div class="settings-card">
-          <div class="settings-card-title" data-i18n="minutes_mode_label">Minutas al terminar la reunión</div>
-          <div class="settings-card-desc" data-i18n="minutes_mode_desc">El transcript se guarda siempre. Las minutas completas tardan unos minutos; con «solo título y resumen» sabes de qué fue la reunión en segundos.</div>
-          <select id="minutes-mode-select" class="settings-select" onchange="saveMinutesMode(this.value)">
-            <option value="full" data-i18n="minutes_mode_full">Completas</option>
-            <option value="summary" data-i18n="minutes_mode_summary">Solo título y resumen</option>
-            <option value="off" data-i18n="minutes_mode_off">Ninguna (solo transcript)</option>
-          </select>
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin:14px 0 5px;">
-            <div class="settings-card-title" data-i18n="actions_setting_label">Extraer acciones de las minutas</div>
-            <label class="pill-toggle" id="toggle-actions">
-              <input type="checkbox" id="actions-enabled" onchange="saveActionsEnabled(this.checked)">
-              <span class="pill-toggle-track"></span>
-            </label>
+          <div class="sc-row">
+            <div class="sc-text">
+              <div class="sc-label"><span data-i18n="minutes_mode_label"></span><span class="sc-info" data-i18n-title="minutes_mode_desc">ⓘ</span></div>
+              <div class="sc-hint" data-i18n="minutes_short"></div>
+            </div>
+            <div class="sc-ctl"><select id="minutes-mode-select" class="settings-select" onchange="saveMinutesMode(this.value)">
+              <option value="full" data-i18n="minutes_mode_full">Completas</option>
+              <option value="summary" data-i18n="minutes_mode_summary">Solo título y resumen</option>
+              <option value="off" data-i18n="minutes_mode_off">Ninguna (solo transcript)</option>
+            </select></div>
           </div>
-          <div class="settings-card-desc" data-i18n="actions_setting_desc">Apagado, no se generan ni se muestran. La reunión se sigue archivando en su proyecto.</div>
+          <div class="sc-row">
+            <div class="sc-text">
+              <div class="sc-label"><span data-i18n="actions_setting_label"></span><span class="sc-info" data-i18n-title="actions_setting_desc">ⓘ</span></div>
+              <div class="sc-hint" data-i18n="actions_short"></div>
+            </div>
+            <div class="sc-ctl"><label class="pill-toggle" id="toggle-actions"><input type="checkbox" id="actions-enabled" onchange="saveActionsEnabled(this.checked)"><span class="pill-toggle-track"></span></label></div>
+          </div>
+          <div class="sc-row">
+            <div class="sc-text">
+              <div class="sc-label"><span data-i18n="ask_model_label"></span><span class="sc-info" data-i18n-title="ask_setting_desc">ⓘ</span></div>
+              <div class="sc-hint" data-i18n="ask_short"></div>
+            </div>
+            <div class="sc-ctl"><select id="qa-model-select" class="settings-select" onchange="saveQaModel(this.value)">
+              <option value="claude-sonnet-5-5" data-i18n="ask_model_sonnet">Sonnet 5.5 (recomendado)</option>
+              <option value="claude-opus-5-5" data-i18n="ask_model_opus">Opus 5.5 (el más potente, lento)</option>
+            </select></div>
+          </div>
         </div>
-
-        <!-- Preguntas sobre la reunión -->
-        <div class="settings-card">
-          <div class="settings-card-title" data-i18n="ask_setting_label">Preguntas sobre la reunión</div>
-          <div class="settings-card-desc" data-i18n="ask_setting_desc">Modelo que responde. Sonnet contesta en unos segundos; Opus razona más, pero tarda y cuesta más.</div>
-          <select id="qa-model-select" class="settings-select" onchange="saveQaModel(this.value)">
-            <option value="claude-sonnet-5-5" data-i18n="ask_model_sonnet">Sonnet 5.5 (recomendado)</option>
-            <option value="claude-opus-5-5" data-i18n="ask_model_opus">Opus 5.5 (el más potente, lento)</option>
-          </select>
-        </div>
-
-
 
         <!-- Glosario -->
         <div class="settings-card">

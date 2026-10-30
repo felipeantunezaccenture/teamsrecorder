@@ -95,8 +95,25 @@ def list_recordings(limit: int = 10) -> list[Path]:
 _EMPTY_PART_BYTES = 1024
 
 
+def _has_minutes(audio: Path) -> bool:
+    """Si la reunion de este audio ya tiene minutas: el mismo criterio con el
+    que tray_app._recover_pending decide si reencolarla al arrancar."""
+    m = re.match(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})', audio.name)
+    if not m:
+        return False
+    return any(MINUTES_DIR.glob(f'{"".join(m.group(1, 2, 3))}_{"".join(m.group(4, 5))}_*.md'))
+
+
+# Lo que aun no se ha procesado se guarda mas tiempo, pero no para siempre:
+# una grabacion sin voz o con la transcripcion rota tambien se queda sin
+# minutas, y _recover_pending la reencolaria (Whisper, o la API de OpenAI si
+# hay OPENAI_API_KEY) en cada arranque.
+PENDING_RETENTION_FACTOR = 3
+
+
 def cleanup_old_recordings(days: int = 10):
     cutoff = datetime.now() - timedelta(days=days)
+    pending_cutoff = datetime.now() - timedelta(days=days * PENDING_RETENTION_FACTOR)
     audio_patterns = ('*.wav', '*.mp3')
     # *.part: temporales que un corte del daemon dejo huerfanos (nadie los
     # convierte en WAV). *.live.*: restos de la transcripcion en vivo
@@ -112,7 +129,8 @@ def cleanup_old_recordings(days: int = 10):
                 # arrancar el daemon: una excepcion aqui lo tumbaria.
                 try:
                     st = f.stat()
-                    if datetime.fromtimestamp(st.st_mtime) >= cutoff:
+                    mtime = datetime.fromtimestamp(st.st_mtime)
+                    if mtime >= cutoff:
                         continue
                     # Un .part con audio en recordings/ es una reunion que el
                     # daemon no llego a guardar: recover_orphan_parts la
@@ -121,6 +139,17 @@ def cleanup_old_recordings(days: int = 10):
                     # 10 dias tras quedarse sin bateria). Los vacios (solo la
                     # cabecera WAV) no son una reunion y se borran.
                     if d == RECORDINGS_DIR and pattern == '*.part' and st.st_size > _EMPTY_PART_BYTES:
+                        continue
+                    # Lo que esta en recordings/ sin minutas es una reunion sin
+                    # procesar (fallo, o el portatil estuvo apagado): se reencola
+                    # al arrancar, justo despues de esta limpieza. Borrar su audio
+                    # por antiguo seria perder la reunion, y su .context (lo que
+                    # escribio el usuario) o su .partial, rehacerla peor. Hasta el
+                    # tope de PENDING_RETENTION_FACTOR. Lo de processed/ ya la tiene.
+                    # Un .part vacio no es una reunion pendiente: ya se decidio
+                    # arriba (se borra), aunque este dentro del tope.
+                    if (d == RECORDINGS_DIR and pattern != '*.part'
+                            and mtime >= pending_cutoff and not _has_minutes(f)):
                         continue
                     f.unlink()
                 except OSError:

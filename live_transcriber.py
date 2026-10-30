@@ -79,14 +79,16 @@ FROM_NOW_ARG = '--from-now'
 STALL_EXIT_S = 600
 
 # Se lanza a los START_DELAY_S de empezar y con el loopback ya arrancado:
-# - no compite con los intentos del worker WASAPI (3 x <=6,5 s) justo cuando
-#   Teams reconfigura el audio;
+# - no compite con los intentos del worker WASAPI justo cuando Teams reconfigura
+#   el audio. Desde 77140da cada intento espera la cabecera hasta 15 s
+#   (audio_recorder._LOOPBACK_HEADER_TIMEOUT): la primera ronda de 3 llega a
+#   unos 50 s, y con 25 se lanzaba en mitad de ella;
 # - una grabacion de pocos segundos no llega a lanzarlo. Medido el 18/10/2026:
 #   un proceso recien nacido deniega el acceso unos segundos, y matarlo en ese
 #   momento lo dejaba suspendido y vivo. No se pierde nada por esperar: lo que
 #   falte lo hace el cierre.
 START_DELAY_S = 20
-LOOPBACK_WAIT_S = 25
+LOOPBACK_WAIT_S = 50
 
 # Bloques del cierre: el mismo tamaño que transcriber._CHUNK_SECS (acota la
 # memoria), cortados en una pausa cerca del limite.

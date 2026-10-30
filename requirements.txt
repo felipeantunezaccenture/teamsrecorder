@@ -6,7 +6,9 @@ sounddevice>=0.4.6
 soundfile>=0.12.1
 numpy>=1.24.0
 pyaudiowpatch>=0.2.12
-faster-whisper>=1.0.0
+# 1.0.2: la primera con `hotwords` (PR #731), que el glosario pasa a Whisper.
+# Con una anterior, transcribe() lanza TypeError y no se transcribe nada.
+faster-whisper>=1.0.2
 # faster-whisper 1.2.x llama a av.open(..., metadata_errors=...), argumento que
 # av 19 ya no acepta ("unexpected keyword argument 'metadata_errors'"). Sin este
 # tope pip instala la ultima y toda transcripcion falla.
