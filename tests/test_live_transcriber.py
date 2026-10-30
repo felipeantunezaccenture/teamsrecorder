@@ -1307,3 +1307,21 @@ def test_el_cierre_dice_cuanto_lleva_de_lo_que_queda(wav, model, me):
     vistos = []
     lt.finish_live(wav, on_progress=vistos.append)
     assert vistos and vistos[-1] == 100 and vistos == sorted(vistos)
+
+def test_al_cancelar_la_marca_se_queda_solo_si_quedan_temporales(tray, wav, monkeypatch):
+    """La marca .discarded es para el siguiente arranque (recover_orphan_parts):
+    si los .part se borraron, sobra; si no, se queda y alli se borran."""
+    recorder = type('R', (), {'is_recording': True, 'cancel': lambda self: None})()
+    tray._recorder = recorder
+    tray._recording_path = wav
+    terco = lt.part_path(wav, 'mic')
+    terco.write_text('x')
+    monkeypatch.setattr(lt, 'discard_artifacts', lambda *_a, **_k: None)   # el borrado falla
+    tray._cancel_recording()
+    assert wav.with_suffix('.discarded').exists()
+
+    tray._recorder = recorder
+    tray._recording_path = wav
+    terco.unlink()
+    tray._cancel_recording()
+    assert not wav.with_suffix('.discarded').exists()

@@ -176,6 +176,8 @@ const T = {
     diag_restart_btn: 'Reiniciar Noted',
     diag_restart_working: 'Reiniciando Noted… la ventana se cerrará y volverá sola.',
     diag_restart_blocked: 'Hay una grabación en curso: no se reinicia.',
+    diag_restart_busy: 'Noted está procesando una reunión (o tiene alguna en cola): no se ha reiniciado. Vuelve a intentarlo cuando termine.',
+    diag_restart_unknown: 'No se ha podido comprobar si Noted está trabajando, así que no se ha reiniciado.',
     diag_restart_nowd: 'No se pudo arrancar el vigilante, así que no se ha reiniciado (Noted no volvería).',
     diag_test_btn: 'Probar ahora',
     diag_test_again: 'Probar otra vez',
@@ -265,15 +267,49 @@ const T = {
     bg_waiting_memory: 'Sin memoria libre para transcribir durante la reunión: se hará al colgar. Cerrar apps que no uses ayuda.',
     bg_yielded: 'Transcripción durante la reunión en pausa: se está terminando otra reunión.',
     live_waiting_memory: 'Sin memoria libre para transcribir ahora: el transcript se hará al colgar. Cerrar apps que no uses ayuda.',
+    bg_waiting_disk: 'Poco espacio en disco: la grabación sigue, y la transcripción se hará al colgar. Libera espacio.',
+    live_waiting_disk: 'Poco espacio en disco: la grabación sigue, y el transcript se hará al colgar. Libera espacio.',
     live_switch: 'Tiempo real',
     live_switch_tip: 'Transcribe al momento, mientras se habla, con un modelo más rápido. Usa más CPU durante la llamada.',
     live_switch_sent: 'Activando el transcript en vivo…',
     live_switch_failed: 'No se pudo activar el transcript en vivo',
     live_bg_hint: 'Se transcribe en segundo plano con el modelo completo, así que va con retraso. Para verlo al momento, pulsa «Tiempo real».',
-    live_setting_label: 'Transcribir durante la reunión',
-    live_setting_desc: 'Mientras grabas, se va transcribiendo con el modelo de arriba, sin prisa y sin quitarle recursos a Teams: al colgar queda poco por hacer. Para verlo al momento, elige «Grabar + en vivo» al empezar o «Tiempo real» durante la grabación. Se aplica desde la siguiente grabación.',
     live_final_label: 'En modo en vivo, guardar el transcript en vivo como definitivo',
     live_final_desc: 'El transcript queda listo segundos después de colgar, pero con la calidad del modelo rápido (small): falla más, sobre todo en términos en inglés. Apagado, lo que se hizo en vivo se rehace con el modelo de arriba.',
+    minutes_mode_label: 'Minutas al terminar la reunión',
+    minutes_mode_desc: 'El transcript se guarda siempre. Las minutas completas tardan unos minutos; con «solo título y resumen» sabes de qué fue la reunión en segundos.',
+    minutes_mode_full: 'Completas',
+    minutes_mode_summary: 'Solo título y resumen',
+    minutes_mode_off: 'Ninguna (solo transcript)',
+    actions_setting_label: 'Extraer acciones de las minutas',
+    actions_setting_desc: 'Apagado, no se generan ni se muestran. La reunión se sigue archivando en su proyecto.',
+    full_minutes_btn: 'Generar minutas completas',
+    ask_setting_desc: 'Modelo que responde. Sonnet contesta en unos segundos; Opus razona más, pero tarda y cuesta más.',
+    meeting_card_title: 'Transcripción, minutas y preguntas',
+    meeting_card_desc: 'Qué modelo se usa y qué se genera durante y después de cada reunión. Pasa el ratón por ⓘ para ver el detalle.',
+    whisper_label: 'Modelo de transcripción',
+    whisper_short: 'Más grande = más preciso, pero más lento. Se aplica al reiniciar.',
+    live_final_short_label: 'Guardar el transcript en vivo como definitivo',
+    live_final_short: 'Listo al colgar, pero con el modelo rápido (small).',
+    minutes_short: 'El transcript se guarda siempre.',
+    actions_short: 'Apagado, no se generan ni se muestran.',
+    ask_model_label: 'Modelo para preguntas',
+    ask_short: 'Sonnet responde rápido; Opus razona más, pero tarda y cuesta más.',
+    ask_model_sonnet: 'Sonnet 5.5 (recomendado)',
+    ask_model_opus: 'Opus 5.5 (el más potente, lento)',
+    ask_title: 'Pregunta sobre la reunión',
+    ask_ph: 'Por ejemplo: ¿qué se dijo del presupuesto?',
+    ask_send: 'Preguntar',
+    ask_s_recent: 'Resúmeme los últimos 5 minutos',
+    ask_s_decided: '¿Qué se ha decidido?',
+    ask_s_open: '¿Qué ha quedado abierto?',
+    ask_thinking: 'Pensando…',
+    ask_upto: (m) => `Según el transcript hasta [${m}]`,
+    ask_note: 'Responde Claude a partir del transcript. Solo lo ves tú y no se guarda.',
+    ask_error: 'No se pudo responder. Vuelve a intentarlo.',
+    ask_error_no_cli: 'No se encuentra Claude (claude CLI) en este equipo.',
+    ask_error_timeout: 'Claude ha tardado demasiado. Vuelve a intentarlo.',
+    ask_error_no_transcript: 'Todavía no hay transcript sobre el que preguntar.',
     semantic_dialog_msg: 'Voy a usar la skill de <span style="color:var(--accent);font-weight:600">captura de conocimiento</span> para crear tu CSV de entrada de la capa semántica para OntoForge.<br><br>¿Quieres incluir otros documentos además de la transcripción?',
     semantic_dialog_browse: 'Añadir documentos…',
     semantic_dialog_none: 'Si no, solo se usará la transcripción de la reunión.',
@@ -367,15 +403,15 @@ const T = {
     privacy_btn: 'Privacidad & Compliance',
     privacy_geo_warning: '⚠ Noted no está recomendado fuera de Europa y Estados Unidos. Su uso en otras regiones puede no cumplir con la legislación local de protección de datos aplicable.',
     privacy_ai_title: 'Servicios de IA que procesan tus datos',
-    privacy_ai_whisper: 'transcripción de audio. Se ejecuta <strong>localmente</strong> en tu equipo. El audio nunca sale de tu máquina.',
-    privacy_ai_claude: 'generación de minutas y enriquecimiento de acciones. El texto de la transcripción se envía a los servidores de Anthropic a través del CLI de Claude para su procesamiento.',
+    privacy_ai_whisper: 'transcripción de audio. Se ejecuta <strong>localmente</strong> en tu equipo. Solo si la transcripción local falla y hay una <code>OPENAI_API_KEY</code> configurada (en Noted o como variable de entorno de Windows), el audio se envía a la API de OpenAI para transcribirlo.',
+    privacy_ai_claude: 'todo lo que Noted le pide a Claude: minutas, acciones, coaching, detección del proyecto, sugerencias del glosario y cualquier otra función que use Claude. Se envía a los servidores de Anthropic, a través del CLI de Claude, el texto de la transcripción y, según la función, el contexto que escribas, los nombres y correos de los asistentes (de Outlook) y los documentos de la carpeta del proyecto de la reunión.',
     privacy_training_title: 'Uso para entrenamiento de modelos',
     privacy_training_body: 'Anthropic no usa los datos procesados a través de Claude para entrenar sus modelos. Los datos están sujetos a la política de privacidad de Anthropic.',
     privacy_retention_title: 'Tiempos de retención',
-    privacy_retention_audio: 'Grabaciones de audio (WAV): <strong>10 días</strong>, borrado automático.',
+    privacy_retention_audio: 'Grabaciones de audio (WAV): <strong>10 días</strong>, borrado automático. Una grabación que aún no se ha procesado se conserva hasta 30 días. La papelera no se vacía sola: se vacía desde la vista Papelera.',
     privacy_retention_minutes: 'Minutas y transcripciones: <strong>90 días</strong> por defecto.',
     privacy_access_title: 'Acceso a los datos',
-    privacy_access_body: 'Noted es una aplicación 100% local. Los datos se almacenan únicamente en tu equipo. No existe sincronización en la nube, acceso remoto ni mecanismo de compartir con otros usuarios.',
+    privacy_access_body: 'Los datos se guardan únicamente en tu equipo: no hay sincronización en la nube ni acceso remoto. Noted solo comparte lo que tú decidas: los correos con las minutas se abren como borrador para que los envíes tú, y el aviso de grabación en el chat de Teams es opcional (apagado por defecto).',
     privacy_biometrics_title: 'Biometría',
     privacy_biometrics_body: 'Las grabaciones de voz se usan exclusivamente para transcripción. No se aplica ningún análisis biométrico, identificación de voz ni creación de perfiles de hablante.',
     privacy_links_title: 'Referencias',
@@ -567,6 +603,8 @@ const T = {
     diag_restart_btn: 'Restart Noted',
     diag_restart_working: 'Restarting Noted… the window will close and come back on its own.',
     diag_restart_blocked: 'A recording is in progress: not restarting.',
+    diag_restart_busy: 'Noted is processing a meeting (or has one queued): it was not restarted. Try again when it finishes.',
+    diag_restart_unknown: 'Could not check whether Noted is working, so it was not restarted.',
     diag_restart_nowd: 'Could not start the watchdog, so nothing was restarted (Noted would not come back).',
     diag_test_btn: 'Test now',
     diag_test_again: 'Test again',
@@ -656,15 +694,49 @@ const T = {
     bg_waiting_memory: 'Not enough free memory to transcribe during the meeting: it will be done after the call. Closing apps you are not using helps.',
     bg_yielded: 'Transcription during the meeting paused: another meeting is being finished.',
     live_waiting_memory: 'Not enough free memory to transcribe now: the transcript will be made after the call. Closing apps you are not using helps.',
+    bg_waiting_disk: 'Low disk space: the recording continues, and the transcription will be done after the call. Free up some space.',
+    live_waiting_disk: 'Low disk space: the recording continues, and the transcript will be made after the call. Free up some space.',
     live_switch: 'Real time',
     live_switch_tip: 'Transcribes as people speak, with a faster model. Uses more CPU during the call.',
     live_switch_sent: 'Turning on the live transcript…',
     live_switch_failed: 'Could not turn on the live transcript',
     live_bg_hint: 'It is being transcribed in the background with the full model, so it lags behind. To see it as it happens, press “Real time”.',
-    live_setting_label: 'Transcribe during the meeting',
-    live_setting_desc: 'While recording, the meeting is transcribed with the model above, unhurried and without taking resources from Teams, so little is left after the call. To see it as it happens, choose “Record + live” at the start or “Real time” during the recording. Applies from the next recording.',
     live_final_label: 'In live mode, save the live transcript as the final one',
     live_final_desc: 'The transcript is ready seconds after hanging up, but with the faster model’s quality (small): more mistakes, especially on English terms. When off, what was done live is redone with the model above.',
+    minutes_mode_label: 'Minutes when the meeting ends',
+    minutes_mode_desc: 'The transcript is always saved. Full minutes take a few minutes; with “title and summary only” you know what the meeting was about in seconds.',
+    minutes_mode_full: 'Full',
+    minutes_mode_summary: 'Title and summary only',
+    minutes_mode_off: 'None (transcript only)',
+    actions_setting_label: 'Extract action items from the minutes',
+    actions_setting_desc: 'When off, they are neither generated nor shown. The meeting is still filed in its project.',
+    full_minutes_btn: 'Generate full minutes',
+    ask_setting_desc: 'Model that answers. Sonnet replies in a few seconds; Opus reasons more, but is slower and costs more.',
+    meeting_card_title: 'Transcription, minutes and questions',
+    meeting_card_desc: 'Which model is used and what is generated during and after each meeting. Hover ⓘ for details.',
+    whisper_label: 'Transcription model',
+    whisper_short: 'Larger = more accurate but slower. Applies after restart.',
+    live_final_short_label: 'Save the live transcript as the final one',
+    live_final_short: 'Ready on hang-up, but with the faster model (small).',
+    minutes_short: 'The transcript is always saved.',
+    actions_short: 'When off, they are not generated or shown.',
+    ask_model_label: 'Model for questions',
+    ask_short: 'Sonnet answers fast; Opus reasons more but is slower and costs more.',
+    ask_model_sonnet: 'Sonnet 5.5 (recommended)',
+    ask_model_opus: 'Opus 5.5 (most powerful, slow)',
+    ask_title: 'Ask about the meeting',
+    ask_ph: 'For example: what was said about the budget?',
+    ask_send: 'Ask',
+    ask_s_recent: 'Summarize the last 5 minutes',
+    ask_s_decided: 'What has been decided?',
+    ask_s_open: 'What is still open?',
+    ask_thinking: 'Thinking…',
+    ask_upto: (m) => `Based on the transcript up to [${m}]`,
+    ask_note: 'Claude answers from the transcript. Only you see it, and it is not saved.',
+    ask_error: 'Could not answer. Try again.',
+    ask_error_no_cli: 'Claude (claude CLI) was not found on this computer.',
+    ask_error_timeout: 'Claude took too long. Try again.',
+    ask_error_no_transcript: 'There is no transcript to ask about yet.',
     semantic_dialog_msg: 'I\'ll use the <span style="color:var(--accent);font-weight:600">knowledge-capture</span> skill to create your semantic layer CSV input for OntoForge.<br><br>Would you like to include any documents besides the transcript?',
     semantic_dialog_browse: 'Add documents…',
     semantic_dialog_none: 'If not, only the meeting transcript will be used.',
@@ -758,15 +830,15 @@ const T = {
     privacy_btn: 'Privacy & Compliance',
     privacy_geo_warning: '⚠ Noted is not recommended outside of Europe and the United States. Its use in other regions may not comply with applicable local data protection laws.',
     privacy_ai_title: 'AI services that process your data',
-    privacy_ai_whisper: 'audio transcription. Runs <strong>locally</strong> on your device. Audio never leaves your machine.',
-    privacy_ai_claude: 'meeting minutes generation and action enrichment. The transcription text is sent to Anthropic\'s servers via the Claude CLI for processing.',
+    privacy_ai_whisper: 'audio transcription. Runs <strong>locally</strong> on your device. If local transcription fails and an <code>OPENAI_API_KEY</code> is set (in Noted or as a Windows environment variable), the audio is sent to the OpenAI API to be transcribed.',
+    privacy_ai_claude: 'everything Noted asks Claude for: minutes, actions, coaching, project detection, glossary suggestions and any other feature that uses Claude. Sent to Anthropic\'s servers via the Claude CLI: the transcription text and, depending on the feature, the context you write, the attendees\' names and emails (from Outlook) and the documents in the meeting\'s project folder.',
     privacy_training_title: 'Use for model training',
     privacy_training_body: 'Anthropic does not use data processed through Claude to train its models. Data is subject to Anthropic\'s privacy policy.',
     privacy_retention_title: 'Retention periods',
-    privacy_retention_audio: 'Audio recordings (WAV): <strong>10 days</strong>, deleted automatically.',
+    privacy_retention_audio: 'Audio recordings (WAV): <strong>10 days</strong>, deleted automatically. A recording that has not been processed yet is kept for up to 30 days. The bin is not emptied automatically: empty it from the Bin view.',
     privacy_retention_minutes: 'Minutes and transcripts: <strong>90 days</strong> by default.',
     privacy_access_title: 'Data access',
-    privacy_access_body: 'Noted is a 100% local application. Data is stored exclusively on your device. There is no cloud sync, remote access, or sharing mechanism.',
+    privacy_access_body: 'Data is stored only on your device: there is no cloud sync or remote access. Noted only shares what you decide: emails with the minutes open as drafts for you to send, and the recording notice in the Teams chat is optional (off by default).',
     privacy_biometrics_title: 'Biometrics',
     privacy_biometrics_body: 'Voice recordings are used exclusively for transcription. No biometric analysis, voice identification, or speaker profiling is applied.',
     privacy_links_title: 'References',
@@ -957,6 +1029,8 @@ const T = {
     diag_restart_btn: 'Reiniciar Noted',
     diag_restart_working: 'Reiniciant Noted… la finestra es tancarà i tornarà sola.',
     diag_restart_blocked: 'Hi ha una gravació en curs: no es reinicia.',
+    diag_restart_busy: 'Noted està processant una reunió (o en té alguna a la cua): no s\'ha reiniciat. Torna-ho a provar quan acabi.',
+    diag_restart_unknown: 'No s\'ha pogut comprovar si Noted està treballant, així que no s\'ha reiniciat.',
     diag_restart_nowd: 'No s\'ha pogut arrencar el vigilant, així que no s\'ha reiniciat (Noted no tornaria).',
     diag_test_btn: 'Provar ara',
     diag_test_again: 'Tornar a provar',
@@ -1046,15 +1120,49 @@ const T = {
     bg_waiting_memory: 'Sense memòria lliure per transcriure durant la reunió: es farà en penjar. Tancar apps que no facis servir ajuda.',
     bg_yielded: 'Transcripció durant la reunió en pausa: s\'està acabant una altra reunió.',
     live_waiting_memory: 'Sense memòria lliure per transcriure ara: el transcript es farà en penjar. Tancar apps que no facis servir ajuda.',
+    bg_waiting_disk: 'Poc espai al disc: la gravació continua, i la transcripció es farà en penjar. Allibera espai.',
+    live_waiting_disk: 'Poc espai al disc: la gravació continua, i el transcript es farà en penjar. Allibera espai.',
     live_switch: 'Temps real',
     live_switch_tip: 'Transcriu al moment, mentre es parla, amb un model més ràpid. Fa servir més CPU durant la trucada.',
     live_switch_sent: 'Activant el transcript en directe…',
     live_switch_failed: 'No s\'ha pogut activar el transcript en directe',
     live_bg_hint: 'Es transcriu en segon pla amb el model complet, així que va amb retard. Per veure-ho al moment, prem «Temps real».',
-    live_setting_label: 'Transcriure durant la reunió',
-    live_setting_desc: 'Mentre graves, es va transcrivint amb el model de dalt, sense pressa i sense treure recursos a Teams: en penjar queda poca feina. Per veure-ho al moment, tria «Gravar + en directe» en començar o «Temps real» durant la gravació. S\'aplica des de la gravació següent.',
     live_final_label: 'En mode en directe, desar el transcript en directe com a definitiu',
     live_final_desc: 'El transcript queda llest uns segons després de penjar, però amb la qualitat del model ràpid (small): s\'equivoca més, sobretot en termes en anglès. Desactivat, el que es va fer en directe es refà amb el model de dalt.',
+    minutes_mode_label: 'Actes en acabar la reunió',
+    minutes_mode_desc: 'El transcript es desa sempre. Les actes completes triguen uns minuts; amb «només títol i resum» saps de què va anar la reunió en segons.',
+    minutes_mode_full: 'Completes',
+    minutes_mode_summary: 'Només títol i resum',
+    minutes_mode_off: 'Cap (només transcript)',
+    actions_setting_label: 'Extreure accions de les actes',
+    actions_setting_desc: 'Desactivat, no es generen ni es mostren. La reunió es continua arxivant al seu projecte.',
+    full_minutes_btn: 'Generar actes completes',
+    ask_setting_desc: 'Model que respon. Sonnet contesta en uns segons; Opus raona més, però triga i costa més.',
+    meeting_card_title: 'Transcripció, actes i preguntes',
+    meeting_card_desc: 'Quin model s\'usa i què es genera durant i després de cada reunió. Passa el ratolí per ⓘ per veure el detall.',
+    whisper_label: 'Model de transcripció',
+    whisper_short: 'Més gran = més precís, però més lent. S\'aplica en reiniciar.',
+    live_final_short_label: 'Desar el transcript en directe com a definitiu',
+    live_final_short: 'Llest en penjar, però amb el model ràpid (small).',
+    minutes_short: 'El transcript es desa sempre.',
+    actions_short: 'Desactivat, no es generen ni es mostren.',
+    ask_model_label: 'Model per a preguntes',
+    ask_short: 'Sonnet respon ràpid; Opus raona més, però triga i costa més.',
+    ask_model_sonnet: 'Sonnet 5.5 (recomanat)',
+    ask_model_opus: 'Opus 5.5 (el més potent, lent)',
+    ask_title: 'Pregunta sobre la reunió',
+    ask_ph: 'Per exemple: què es va dir del pressupost?',
+    ask_send: 'Preguntar',
+    ask_s_recent: 'Resumeix-me els últims 5 minuts',
+    ask_s_decided: 'Què s\'ha decidit?',
+    ask_s_open: 'Què ha quedat obert?',
+    ask_thinking: 'Pensant…',
+    ask_upto: (m) => `Segons el transcript fins a [${m}]`,
+    ask_note: 'Respon Claude a partir del transcript. Només ho veus tu i no es desa.',
+    ask_error: 'No s\'ha pogut respondre. Torna-ho a provar.',
+    ask_error_no_cli: 'No es troba Claude (claude CLI) en aquest equip.',
+    ask_error_timeout: 'Claude ha trigat massa. Torna-ho a provar.',
+    ask_error_no_transcript: 'Encara no hi ha transcript sobre el qual preguntar.',
     semantic_dialog_msg: 'Faré servir la skill de <span style="color:var(--accent);font-weight:600">captura de coneixement</span> per crear el teu CSV d\'entrada de la capa semàntica per a OntoForge.<br><br>Vols incloure altres documents a més de la transcripció?',
     semantic_dialog_browse: 'Afegir documents…',
     semantic_dialog_none: 'Si no, només s\'utilitzarà la transcripció de la reunió.',
@@ -1143,15 +1251,15 @@ const T = {
     privacy_btn: 'Privadesa & Compliment',
     privacy_geo_warning: '⚠ Noted no es recomana fora d\'Europa i els Estats Units. El seu ús en altres regions pot no complir amb la legislació local de protecció de dades aplicable.',
     privacy_ai_title: 'Serveis d\'IA que processen les teves dades',
-    privacy_ai_whisper: 'transcripció d\'àudio. S\'executa <strong>localment</strong> al teu equip. L\'àudio no surt mai de la teva màquina.',
-    privacy_ai_claude: 'generació d\'actes i enriquiment d\'accions. El text de la transcripció s\'envia als servidors d\'Anthropic a través del CLI de Claude per al seu processament.',
+    privacy_ai_whisper: 'transcripció d\'àudio. S\'executa <strong>localment</strong> al teu equip. Només si la transcripció local falla i hi ha una <code>OPENAI_API_KEY</code> configurada (a Noted o com a variable d\'entorn de Windows), l\'àudio s\'envia a l\'API d\'OpenAI per transcriure\'l.',
+    privacy_ai_claude: 'tot el que Noted li demana a Claude: actes, accions, coaching, detecció del projecte, suggeriments del glossari i qualsevol altra funció que faci servir Claude. S\'envia als servidors d\'Anthropic, a través del CLI de Claude, el text de la transcripció i, segons la funció, el context que escriguis, els noms i correus dels assistents (d\'Outlook) i els documents de la carpeta del projecte de la reunió.',
     privacy_training_title: 'Ús per a entrenament de models',
     privacy_training_body: 'Anthropic no utilitza les dades processades a través de Claude per entrenar els seus models. Les dades estan subjectes a la política de privadesa d\'Anthropic.',
     privacy_retention_title: 'Temps de retenció',
-    privacy_retention_audio: 'Gravacions d\'àudio (WAV): <strong>10 dies</strong>, esborrat automàtic.',
+    privacy_retention_audio: 'Gravacions d\'àudio (WAV): <strong>10 dies</strong>, esborrat automàtic. Una gravació que encara no s\'ha processat es conserva fins a 30 dies. La paperera no es buida sola: es buida des de la vista Paperera.',
     privacy_retention_minutes: 'Actes i transcripcions: <strong>90 dies</strong> per defecte.',
     privacy_access_title: 'Accés a les dades',
-    privacy_access_body: 'Noted és una aplicació 100% local. Les dades s\'emmagatzemen únicament al teu equip. No existeix sincronització al núvol, accés remot ni mecanisme de compartir.',
+    privacy_access_body: 'Les dades es guarden únicament al teu equip: no hi ha sincronització al núvol ni accés remot. Noted només comparteix el que tu decideixis: els correus amb les actes s\'obren com a esborrany perquè els enviïs tu, i l\'avís de gravació al xat de Teams és opcional (desactivat per defecte).',
     privacy_biometrics_title: 'Biometria',
     privacy_biometrics_body: 'Les gravacions de veu s\'utilitzen exclusivament per a transcripció. No s\'aplica cap anàlisi biomètrica, identificació de veu ni creació de perfils de parlant.',
     privacy_links_title: 'Referències',
@@ -1232,6 +1340,7 @@ function applyLang(lang) {
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.placeholder = v;
     else el.textContent = v;
   });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); });
   const si = document.getElementById('search-input');
   if (si) si.placeholder = t('search_ph');
   const trashBtn = document.getElementById('btn-trash');
@@ -1849,6 +1958,7 @@ async function openMeeting(path) {
         ${hasSemantic ? `<button class="detail-tab" id="tab-semantic" data-tab="semantic">${t('tab_semantic')}</button>` : ''}
       </div>
       <div class="minutes-section" id="section-notes">
+        ${meeting.brief ? `<div class="brief-minutes-bar"><button class="btn btn-primary btn-sm" id="btn-full-minutes">${t('full_minutes_btn')}</button></div>` : ''}
         <div class="minutes-content">${minutesHtml ? sanitizeHtml(minutesHtml) : `<em>${t('no_minutes')}</em>`}</div>
       </div>
       <div class="actions-section hidden" id="section-actions">
@@ -1862,6 +1972,7 @@ async function openMeeting(path) {
         <div id="meeting-actions"></div>
       </div>
       <div class="transcript-section hidden" id="section-transcript">
+        ${transcriptText ? '<div id="meeting-ask"></div>' : ''}
         <div class="transcript-content">${transcriptText ? escHtml(transcriptText) : `<em style="color:var(--muted)">${t('no_minutes')}</em>`}</div>
       </div>
       ${hasSemantic ? `<div class="semantic-section hidden" id="section-semantic" data-path="${escHtml(path)}"></div>` : ''}
@@ -1899,6 +2010,14 @@ async function openMeeting(path) {
   document.getElementById('btn-regenerate').addEventListener('click', () => toggleRegenBar());
   document.getElementById('btn-regen-cancel').addEventListener('click', () => toggleRegenBar(false));
   document.getElementById('btn-regen-confirm').addEventListener('click', () => confirmRegen(path));
+  // Minutas breves (nivel de Ajustes): las completas, para esta reunion.
+  document.getElementById('btn-full-minutes')?.addEventListener('click', (e) => {
+    e.currentTarget.disabled = true;
+    confirmRegen(path, '');
+  });
+  const askBox = document.getElementById('meeting-ask');
+  if (askBox) mountAsk(askBox, 'meeting', path);
+  applyActionsVisibility();
   document.getElementById('btn-edit-notes').addEventListener('click', () => {
     const activeTab = document.querySelector('.detail-tab.active')?.dataset.tab || 'notes';
     if (activeTab === 'actions') reenrichMeeting(path);
@@ -3902,19 +4021,49 @@ async function loadRecordingSettings() {
       ta.value = s.teams_chat_message ?? '';
       ta.disabled = !enabled;
     }
-    // Mismos valores por defecto que live_transcriber.background_enabled()/final_enabled().
-    const bgCb = document.getElementById('background-enabled');
+    // Mismos valores por defecto que live_transcriber.final_enabled().
     const finalCb = document.getElementById('live-final-enabled');
-    if (bgCb) bgCb.checked = s.background_transcription !== false;
     if (finalCb) finalCb.checked = s.live_transcript_final === true;
+    // Mismos valores por defecto que config.minutes_mode()/actions_enabled() y meeting_qa.qa_model().
+    const modeSel = document.getElementById('minutes-mode-select');
+    if (modeSel) modeSel.value = ['full', 'summary', 'off'].includes(s.minutes_mode) ? s.minutes_mode : 'full';
+    const actCb = document.getElementById('actions-enabled');
+    if (actCb) actCb.checked = s.actions_enabled !== false;
+    const qaSel = document.getElementById('qa-model-select');
+    if (qaSel) qaSel.value = QA_MODELS.includes(s.qa_model) ? s.qa_model : 'claude-sonnet-5-5';
   } catch (e) {
     renderWhisperOptions('medium');
   }
 }
 
-async function saveBackgroundEnabled(enabled) {
-  await pywebview.api.save_settings({ background_transcription: enabled });
+const QA_MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5'];   // = meeting_qa.MODELS
+
+async function saveMinutesMode(mode) {
+  await pywebview.api.save_settings({ minutes_mode: mode });
   showToast(t('settings_saved'));
+}
+
+async function saveActionsEnabled(enabled) {
+  await pywebview.api.save_settings({ actions_enabled: enabled });
+  _actionsEnabled = enabled;
+  applyActionsVisibility();
+  showToast(t('settings_saved'));
+}
+
+async function saveQaModel(model) {
+  await pywebview.api.save_settings({ qa_model: model });
+  showToast(t('settings_saved'));
+}
+
+// Acciones apagadas en Ajustes: se ocultan el Panel Acciones y la pestaña de
+// cada reunion (decision de Felipe, 19/10/2026: no las sigue).
+let _actionsEnabled = true;
+
+function applyActionsVisibility() {
+  const nav = document.getElementById('btn-actions');
+  if (nav) nav.style.display = _actionsEnabled ? '' : 'none';
+  const tab = document.getElementById('tab-actions');
+  if (tab) tab.style.display = _actionsEnabled ? '' : 'none';
 }
 
 async function saveLiveFinalEnabled(enabled) {
@@ -4059,6 +4208,8 @@ async function restartNoted() {
 
   if (!r || !r.ok) {
     const key = (r && r.reason === 'recording') ? 'diag_restart_blocked'
+              : (r && r.reason === 'busy') ? 'diag_restart_busy'
+              : (r && r.reason === 'unknown') ? 'diag_restart_unknown'
               : (r && r.reason === 'no_watchdog') ? 'diag_restart_nowd'
               : 'diag_error';
     showToast(t(key));
@@ -5211,6 +5362,8 @@ async function initSettings() {
     const s = await pywebview.api.get_settings();
     savedLang  = s.language || localStorage.getItem('lang')  || 'es';
     savedTheme = s.theme    || localStorage.getItem('theme') || 'light';
+    _actionsEnabled = s.actions_enabled !== false;
+    applyActionsVisibility();
   } catch (e) {
     savedLang  = localStorage.getItem('lang')  || 'es';
     savedTheme = localStorage.getItem('theme') || 'light';
@@ -5460,9 +5613,13 @@ function _restoreRegenBar(bar) {
   document.getElementById('btn-regen-cancel')?.addEventListener('click', () => toggleRegenBar(false));
 }
 
-async function confirmRegen(path) {
+async function confirmRegen(path, ctxOverride) {
+  // Revision del 19/10/2026: un doble clic lanzaba dos regeneraciones (dos
+  // claude -p sobre el mismo .md). Y "Generar minutas completas" pasa ctx
+  // vacio a proposito: no debe mandar lo que quedo escrito en la barra oculta.
+  if (_regenPath === path) return;
   const ta = document.getElementById('regen-textarea');
-  const ctx = ta ? ta.value.trim() : '';
+  const ctx = ctxOverride !== undefined ? ctxOverride : (ta ? ta.value.trim() : '');
 
   const bar = document.getElementById('regen-bar');
   _showRegenProgress(bar);
@@ -5477,8 +5634,10 @@ async function confirmRegen(path) {
     return;
   }
 
-  // Polling: actualiza barra de progreso cada segundo hasta done (max 120s)
-  for (let i = 0; i < 120; i++) {
+  // Polling: actualiza barra de progreso cada segundo hasta done. Hasta 15 min,
+  // el timeout de claude -p en minutes_generator: unas minutas completas tardan
+  // 2-4,5 min (medido el 19/10/2026), y a los 120 s se daban por hechas sin estarlo.
+  for (let i = 0; i < 900; i++) {
     await new Promise(r => setTimeout(r, 1000));
 
     // If the panel was rebuilt by something else, bar is detached — keep
@@ -5700,7 +5859,8 @@ async function updatePipelineFooter() {
     // Por que la transcripcion durante la reunion no avanza (23/10/2026: una
     // llamada entera esperando memoria sin que se viera en ningun sitio).
     const bgKey = j.stage === 'recording'
-      ? ({ waiting_memory: 'bg_waiting_memory', yielded: 'bg_yielded' })[j.live_state] : null;
+      ? ({ waiting_memory: 'bg_waiting_memory', waiting_disk: 'bg_waiting_disk',
+           yielded: 'bg_yielded' })[j.live_state] : null;
     const bgLine = bgKey
       ? `<div class="pipeline-job-subtitle" style="font-size:11px;color:var(--muted);margin:3px 0 0 16px">${escHtml(t(bgKey))}</div>`
       : '';
@@ -5736,6 +5896,10 @@ function openLiveModal(stem) {
   document.getElementById('live-modal-lines').innerHTML = '';
   document.getElementById('live-modal-status').textContent = t('live_waiting');
   document.getElementById('live-modal').classList.remove('hidden');
+  // El panel "En curso", desde donde se abre esta vista, se quedaba encima y
+  // tapaba la caja de preguntas (QA del 19/10/2026, ISSUE-001).
+  if (_pipelinePanelOpen) togglePipelinePanel();
+  mountAsk(document.getElementById('live-ask'), 'live', stem);
   clearInterval(_liveTimer);
   _liveTimer = setInterval(refreshLiveModal, 2000);
   refreshLiveModal();
@@ -5750,6 +5914,7 @@ async function switchLive(stem) {
 function closeLiveModal() {
   clearInterval(_liveTimer);
   _liveTimer = null;
+  if (_liveStem) { try { pywebview.api.ask_close('live', _liveStem); } catch (_) {} }
   _liveStem = null;
   document.getElementById('live-modal').classList.add('hidden');
 }
@@ -5764,6 +5929,7 @@ async function refreshLiveModal() {
   const statusEl = document.getElementById('live-modal-status');
   statusEl.textContent = data?.state === 'failed' ? t('live_failed')
                        : data?.state === 'waiting_memory' ? t('live_waiting_memory')
+                       : data?.state === 'waiting_disk' ? t('live_waiting_disk')
                        : data?.mode === 'background' ? t('live_bg_hint')
                        : (lines.length || _liveCount) ? '' : t('live_waiting');
   // Al parar, el pipeline cierra el transcript y borra los ficheros en vivo:
@@ -5780,6 +5946,138 @@ async function refreshLiveModal() {
   _liveCount = lines.length;
   // Solo se baja sola si ya estabas abajo: si subiste a releer algo, no te mueve.
   if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+// ── Preguntar sobre la reunión (meeting_qa) ───────────────────────────────────
+// La conversacion vive solo aqui, en memoria: no se guarda en ningun sitio
+// (decision de Felipe, 19/10/2026). Una por reunion: 'live:<stem>' o 'meeting:<ruta>'.
+const _askThreads = {};
+const _askRender = {};
+const _askBusy = {};
+const ASK_POLL_MS = 500;
+// 320 s: por encima del peor caso del backend (sesion 120 s + red de una sola
+// vez con su arranque y otros 120 s). Con menos, se soltaba la caja con la
+// pregunta aun en marcha.
+const ASK_MAX_POLLS = 640;
+
+// La respuesta llega en markdown (**negrita**, listas, `codigo`). Se escapa PRIMERO
+// y solo despues se generan las etiquetas, asi que nada de lo que diga el modelo
+// (ni de lo transcrito) puede colar HTML. Un ** sin cerrar, mientras la respuesta
+// aun llega por trozos, se queda literal hasta que llega su pareja.
+function _askInline(s) {
+  return escHtml(s)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*\w])\*(?!\s)([^*\n]+?)\*(?![*\w])/g, '$1<em>$2</em>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\[(\d{1,3}:\d{2})\]/g, '<span class="live-time">[$1]</span>');
+}
+
+function _askAnswerHtml(text) {
+  const out = [];
+  let items = null;
+  const flush = () => {
+    if (items) out.push(`<ul class="ask-list">${items.join('')}</ul>`);
+    items = null;
+  };
+  for (const raw of String(text).split('\n')) {
+    const li = raw.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (li) { (items = items || []).push(`<li>${_askInline(li[1])}</li>`); continue; }
+    flush();
+    const h = raw.match(/^\s*#{1,6}\s+(.*)$/);
+    if (h) out.push(`<div class="ask-heading">${_askInline(h[1])}</div>`);
+    else if (raw.trim()) out.push(`<div>${_askInline(raw)}</div>`);
+  }
+  flush();
+  return out.join('');
+}
+
+function _askErrorText(err) {
+  const known = ['no_cli', 'timeout', 'no_transcript'];
+  return known.includes(err) ? t('ask_error_' + err) : t('ask_error');
+}
+
+function mountAsk(el, source, ref) {
+  if (!el) return;
+  const key = `${source}:${ref}`;
+  const thread = _askThreads[key] || (_askThreads[key] = []);
+  const chips = ['ask_s_recent', 'ask_s_decided', 'ask_s_open']
+    .map(k => `<button class="brain-chip" type="button">${escHtml(t(k))}</button>`).join('');
+  el.innerHTML = `
+    <div class="ask-box">
+      <div class="ask-title">${t('ask_title')}</div>
+      <div class="ask-thread"></div>
+      <div class="brain-chips ask-chips">${chips}</div>
+      <div class="ask-input-row">
+        <textarea class="brain-chat-textarea" rows="1" placeholder="${escHtml(t('ask_ph'))}"></textarea>
+        <button class="btn btn-primary btn-sm ask-send" type="button">${t('ask_send')}</button>
+      </div>
+      <div class="ask-note">${t('ask_note')}</div>
+    </div>`;
+  const box = el.querySelector('.ask-box');
+  const ta = box.querySelector('textarea');
+  const btn = box.querySelector('.ask-send');
+
+  const render = () => {
+    if (!box.isConnected) return;
+    btn.disabled = !!_askBusy[key];
+    box.querySelectorAll('.ask-chips .brain-chip').forEach(c => { c.disabled = !!_askBusy[key]; });
+    const list = box.querySelector('.ask-thread');
+    list.innerHTML = thread.map(m => `
+      <div class="brain-chat-msg brain-chat-msg-user"><div class="brain-msg-content">${escHtml(m.q)}</div></div>
+      <div class="brain-chat-msg brain-chat-msg-assistant${m.pending ? ' thinking' : ''}">
+        <div class="brain-msg-content">${m.error ? escHtml(_askErrorText(m.error))
+                                                : _askAnswerHtml(m.a || t('ask_thinking'))}</div>
+        ${m.upto ? `<div class="ask-upto">${escHtml(t('ask_upto', m.upto))}</div>` : ''}
+      </div>`).join('');
+    list.scrollTop = list.scrollHeight;
+  };
+  _askRender[key] = render;     // si se vuelve a montar, la respuesta en curso pinta aqui
+  const redraw = () => _askRender[key] && _askRender[key]();
+
+  const send = async (q) => {
+    q = (q || '').trim();
+    if (!q || _askBusy[key]) return;
+    _askBusy[key] = true;
+    ta.value = '';
+    const history = thread.filter(m => !m.error && m.a).map(m => ({ q: m.q, a: m.a }));
+    const msg = { q, a: '', pending: true, upto: null, error: null };
+    thread.push(msg);
+    redraw();
+    let r;
+    try { r = await pywebview.api.ask_meeting(source, ref, q, history); } catch (_) { r = null; }
+    if (r && r.ok) {
+      msg.upto = r.upto;
+      for (let i = 0; ; i++) {
+        await new Promise(res => setTimeout(res, ASK_POLL_MS));
+        if (i >= ASK_MAX_POLLS) { msg.error = 'timeout'; break; }
+        let s;
+        try { s = await pywebview.api.get_ask_status(r.run_id); } catch (_) { continue; }
+        if (s.text) msg.a = s.text;
+        if (s.done) { msg.error = s.error || null; break; }
+        redraw();
+      }
+    } else {
+      msg.error = (r && r.error) || 'bridge';
+    }
+    msg.pending = false;
+    _askBusy[key] = false;
+    redraw();
+  };
+
+  btn.addEventListener('click', () => send(ta.value));
+  ta.addEventListener('keydown', e => {
+    // Con IME o el dictado de Windows, Enter confirma la composicion: no enviar a medias.
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(ta.value); }
+  });
+  box.querySelectorAll('.ask-chips .brain-chip').forEach(c => c.addEventListener('click', () => send(c.textContent)));
+  // Arrancar claude cuesta ~10 s: en vivo se abre ya la sesion (abriste la vista
+  // para eso); en una reunion terminada, al acercarte a la caja.
+  const warm = () => { try { pywebview.api.ask_warmup(source, ref); } catch (_) {} };
+  if (source === 'live') warm();
+  else box.addEventListener('pointerenter', warm, { once: true });
+  ta.addEventListener('focus', warm, { once: true });
+  render();
 }
 
 function togglePipelinePanel() {

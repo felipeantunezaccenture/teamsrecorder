@@ -1,0 +1,32 @@
+{
+  "transcript": "reunion_sintetica.txt",
+  "upto": "09:12",
+  "cases": [
+    {"id": "F1", "class": "factual", "question": "¿Cuándo es el taller?",
+     "groups": [["23"], ["10", "diez"]], "ts": ["00:51", "01:04"]},
+    {"id": "F2", "class": "factual", "question": "¿Cuántos casos de uso tiene la lista larga y con cuántos se quiere salir del taller?",
+     "groups": [["14", "catorce"], ["6", "seis"]], "ts": ["01:41", "01:55", "02:08"]},
+    {"id": "F3", "class": "factual", "question": "¿Qué presupuesto hay aprobado?",
+     "groups": [["120", "ciento veinte"]], "ts": ["02:50", "03:04", "03:11"]},
+    {"id": "F4", "class": "factual", "question": "¿Dónde será el taller?",
+     "groups": [["nube"], ["tres", "3"]], "ts": ["01:12", "01:25"]},
+    {"id": "F5", "class": "factual", "question": "¿Qué riesgo se comentó sobre los datos?",
+     "groups": [["sap"], ["noviembre"]], "ts": ["04:30", "04:44", "04:52"]},
+    {"id": "D1", "class": "decision", "question": "¿Qué herramienta se eligió para el taller y por qué?",
+     "groups": [["miro"], ["licencia", "pagad"]], "ts": ["03:38", "03:49", "04:01", "04:09"]},
+    {"id": "D2", "class": "decision", "question": "¿Quién manda la agenda definitiva y cuándo?",
+     "groups": [["felipe", "tú", "usted"], ["martes"]], "ts": ["06:52", "07:00", "07:06"]},
+    {"id": "D3", "class": "decision", "question": "¿Qué ha quedado abierto?",
+     "groups": [["finanzas"]], "ts": ["05:33", "05:41", "05:50", "06:02"]},
+    {"id": "T1", "class": "temporal", "question": "¿Cuál era el objetivo de la reunión, dicho al principio?",
+     "groups": [["taller"], ["prioriz"]], "ts": ["00:14"]},
+    {"id": "T2", "class": "temporal", "question": "Resúmeme los últimos dos minutos",
+     "groups": [["lunes"], ["miro", "tablero"]], "ts": ["08:30", "08:41", "08:52", "09:05", "09:12"]},
+    {"id": "E1", "class": "language", "question": "When and where is the workshop?",
+     "groups": [["thursday", "23", "october"], ["nube", "cloud"]], "ts": ["00:51", "01:04", "01:12", "01:25"],
+     "lang": "en"},
+    {"id": "N1", "class": "null", "question": "¿Quién es el sponsor del proyecto?"},
+    {"id": "N2", "class": "null", "question": "¿Qué se dijo sobre la migración a Azure?"},
+    {"id": "N3", "class": "null", "question": "¿Cuánto cuestan las licencias de Miro?", "no_numbers": true}
+  ]
+}

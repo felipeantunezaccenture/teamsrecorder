@@ -35,6 +35,8 @@ def get_meeting_project(minutes_path: Path) -> dict | None:
         project_id = adata.get('project_id', 'none')
     except Exception:
         return None
+    if adata.get('project_source') == 'title':
+        return None     # una suposicion por el titulo no se exporta (ver meeting_project_id)
     if not project_id or project_id == 'none':
         return None
     projects_file = PROJECT_DIR / 'projects.json'

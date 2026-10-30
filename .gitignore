@@ -27,6 +27,7 @@ startup_error.txt
 .cancelled_jobs.txt
 .app_window.pid
 .app_navigate.txt
+.disk_reserve
 
 # ── Scripts y documentos excluidos por privacidad ────────────────────────────
 extract_gsk_content.py

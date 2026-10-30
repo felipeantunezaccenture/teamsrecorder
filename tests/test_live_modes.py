@@ -338,7 +338,8 @@ def test_el_pipeline_pasa_la_pausa_al_transcriptor(tray, wav, wav_factory, monke
     monkeypatch.setattr(tray, 'set_processing', lambda *_a: None)
     monkeypatch.setattr(tray, '_register_part', lambda *_a: None)
     tray._run_pipeline_sync(wav)
-    assert vistos['should_pause'] == tray._live_priority
+    # La del modo en vivo va dentro (ver test_pipeline_yields: _pipeline_should_pause).
+    assert vistos['should_pause'] == tray._pipeline_should_pause
 
 
 class UnaLinea:
@@ -580,6 +581,9 @@ def proceso(wav, monkeypatch):
     monkeypatch.setattr(lt, '_start_watchdog', lambda *_a: None)
     monkeypatch.setattr(lt, '_memory_ok', lambda _n: True)
     monkeypatch.setattr(lt, '_memory_floor_ok', lambda: True)
+    # Ni del disco de la maquina: con menos de ~6 GB libres esperaria disco.
+    monkeypatch.setattr(lt, '_disk_ok', lambda _n: True)
+    monkeypatch.setattr(lt, '_disk_floor_ok', lambda: True)
     prioridades, eficiencia = [], []
     monkeypatch.setattr(lt, '_set_priority', prioridades.append)
     monkeypatch.setattr(lt, '_opt_out_of_efficiency_mode', lambda: eficiencia.append(1) or True)
@@ -651,9 +655,22 @@ def test_cediendo_sale_si_la_grabacion_se_descarta(proceso, wav):
     hilo = proceso.arrancar()
     assert proceso.hasta(lambda: lt.read_status(wav).get('state') == 'yielded')
     for t in lt.TRACKS:
-        lt.part_path(wav, t).unlink()
+        borrar_aunque_se_este_leyendo(lt.part_path(wav, t))
     hilo.join(5)
     assert not hilo.is_alive()
+
+
+def borrar_aunque_se_este_leyendo(path, intentos=50):
+    """En Windows, borrar un fichero mientras el proceso lo tiene abierto para
+    leer (read_part: abrir, leer, cerrar) da WinError 32 en ese instante. Como
+    el grabador de verdad, se reintenta."""
+    for _ in range(intentos):
+        try:
+            path.unlink()
+            return
+        except PermissionError:
+            time.sleep(0.02)
+    path.unlink()
 
 
 def test_lanzado_en_vivo_a_mitad_de_reunion_empieza_en_ahora(proceso, wav):

@@ -115,8 +115,11 @@ El hook `post-merge` reinicia la app automáticamente tras cada `/update-noted`.
 ## Paso 4 — Arrancar la app por primera vez
 
 ```powershell
-Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $TR 'watchdog.ps1')`""
+. (Join-Path $TR 'tr_env.ps1')
+Start-TRDaemon -Root $TR
 ```
+
+Debe imprimir `True`. `Start-TRDaemon` pide el watchdog al Explorador: lanzado con `Start-Process` desde esta sesión, Noted heredaría el job de Windows de Claude y se cerraría con la app.
 
 Espera 5 segundos y verifica que está corriendo:
 

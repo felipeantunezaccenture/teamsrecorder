@@ -3,14 +3,12 @@ import logging
 import os
 import subprocess
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
-from config import PROJECT_DIR
+from config import get_claude_bin as _get_claude_bin, PROJECT_DIR, clean_env as _clean_env
 
 log = logging.getLogger(__name__)
-
-from config import get_claude_bin as _get_claude_bin, clean_env as _clean_env
 
 _CLAUDE_TYPES = {'instruction', 'code_change', 'document_change'}
 
@@ -91,10 +89,12 @@ def _run_enrichment(minutes_path: Path, projects_dir: Path, on_done=None):
         all_actions = merge_actions(claude_actions, human_actions)
 
         if not all_actions:
+            # on_done lo llama el finally: llamarlo tambien aqui archivaba y
+            # exportaba la reunion dos veces. Y sin acciones el proyecto se
+            # detecta igual: si no, la reunion no se archivaba.
             log.info("Sin acciones en las minutas")
             _save_json(minutes_path, all_actions, {})
-            if on_done:
-                on_done()
+            _detect_and_save_project(minutes_path, projects_dir)
             return
 
         enriched_map = {}
@@ -181,17 +181,40 @@ def _run_enrichment(minutes_path: Path, projects_dir: Path, on_done=None):
         if on_done:
             try:
                 on_done()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"_run_enrichment: on_done fallo: {e}", exc_info=True)
 
 
-def _detect_and_save_project(minutes_path: Path, projects_dir: Path):
-    """Ask Claude to identify which project this meeting belongs to."""
-    _claude_bin = _get_claude_bin()
-    if not _claude_bin:
-        return
+def save_without_actions(minutes_path: Path, projects_dir: Path, extra_text: str | None = None,
+                         on_done=None):
+    """Acciones apagadas o minutas breves (decision de Felipe, 19/10/2026): sin
+    extraer ni enriquecer acciones, pero con su _actions.json vacio y el
+    proyecto detectado, que es de lo que dependen el archivado, la exportacion
+    y scan_meetings.py. extra_text: el principio del transcript, cuando las
+    minutas son breves y no bastan para reconocer el proyecto."""
+    def run():
+        try:
+            _save_json(minutes_path, [], {})
+            _detect_and_save_project(minutes_path, projects_dir, extra_text)
+        except Exception as e:
+            log.error(f"save_without_actions: {e}", exc_info=True)
+        finally:
+            if on_done:
+                try:
+                    on_done()
+                except Exception as e:
+                    log.warning(f"save_without_actions: on_done fallo: {e}", exc_info=True)
+    threading.Thread(target=run, daemon=True, name='ProjectDetect').start()
+
+
+def _detect_and_save_project(minutes_path: Path, projects_dir: Path, extra_text: str | None = None,
+                             title_fallback: bool = True):
+    """Ask Claude to identify which project this meeting belongs to. Si Claude no
+    responde (sin sesion, sin CLI), el proyecto que nombre el titulo, como
+    suposicion (_save_project_from_title): hasta el 28/10/2026 esas reuniones se
+    quedaban sin proyecto. title_fallback=False en la deteccion masiva: con Claude
+    caido no se aplica una suposicion a todo el historial."""
     # Load projects
-    from config import PROJECT_DIR
     projects_file = PROJECT_DIR / 'projects.json'
     if not projects_file.exists():
         return
@@ -216,7 +239,15 @@ def _detect_and_save_project(minutes_path: Path, projects_dir: Path):
             meeting_title = line.removeprefix('TITULO:').strip()
             break
 
+    _claude_bin = _get_claude_bin()
+    if not _claude_bin:
+        if title_fallback:
+            _save_project_from_title(minutes_path, meeting_title, projects)
+        return
+
     content = raw[:4000]
+    if extra_text:
+        content += f"\n\nTranscript (beginning):\n{extra_text[:4000]}"
 
     proj_block = '\n'.join(
         f"- id: {p['id']} | name: {p['name']} | description: {p.get('description','')} | stakeholders: {', '.join(p.get('stakeholders', []))}"
@@ -247,8 +278,9 @@ No explanation, just the id or "none"."""
         else:
             si = None
             CREATE_NO_WINDOW = 0
+        # Sin guardar la sesion: el prompt lleva extracto de minutas o transcript.
         result = subprocess.run(
-            [_claude_bin, '-p'],
+            [_claude_bin, '-p', '--no-session-persistence'],
             input=prompt, capture_output=True, text=True,
             encoding='utf-8', timeout=60, env=env,
             startupinfo=si if os.name == 'nt' else None,
@@ -258,15 +290,54 @@ No explanation, just the id or "none"."""
             detected = result.stdout.strip().lower().strip('"\'')
             valid_ids = {p['id'] for p in projects}
             project_id = detected if detected in valid_ids else 'none'
-            # Save to actions JSON
-            ap = get_actions_path(minutes_path)
-            if ap.exists():
-                adata = json.loads(ap.read_text(encoding='utf-8'))
-                adata['project_id'] = project_id
-                ap.write_text(json.dumps(adata, ensure_ascii=False, indent=2), encoding='utf-8')
+            if _store_project_id(minutes_path, project_id):
                 log.info(f"Project detected: {project_id} for {minutes_path.name}")
+            return
+        log.warning(f"Project detection: claude rc={result.returncode}: "
+                    f"{((result.stderr or '').strip() or (result.stdout or '').strip())[:300]}")
     except Exception as e:
         log.warning(f"Project detection failed: {e}")
+    if title_fallback:
+        _save_project_from_title(minutes_path, meeting_title, projects)
+
+
+def _store_project_id(minutes_path: Path, project_id: str, source: str | None = None) -> bool:
+    """Guarda el proyecto de la reunion. source='title' lo marca como suposicion
+    (no se archiva ni se exporta, y la deteccion con Claude lo revisa). El que
+    eligio el usuario (project_source 'manual') no se toca."""
+    ap = get_actions_path(minutes_path)
+    if not ap.exists():
+        return False
+    adata = json.loads(ap.read_text(encoding='utf-8'))
+    if adata.get('project_source') == 'manual':
+        log.info(f"Proyecto elegido a mano en {minutes_path.name}: se conserva")
+        return False
+    adata['project_id'] = project_id
+    if source:
+        adata['project_source'] = source
+    else:
+        adata.pop('project_source', None)
+    ap.write_text(json.dumps(adata, ensure_ascii=False, indent=2), encoding='utf-8')
+    return True
+
+
+def _save_project_from_title(minutes_path: Path, meeting_title: str, projects: list) -> None:
+    """Sin respuesta de Claude: el proyecto que nombre el titulo, marcado como
+    suposicion. El panel lo muestra, pero no se archiva ni se exporta a la
+    carpeta del proyecto hasta que Claude o el usuario lo confirmen: una
+    reunion en la carpeta de otro cliente es peor que una sin proyecto. Si el
+    titulo no nombra ninguno (o empatan dos), sin project_id, para que una
+    deteccion posterior con Claude lo vuelva a intentar."""
+    from project_context import project_from_title
+    try:
+        p = project_from_title(meeting_title, projects)
+        if p and _store_project_id(minutes_path, p['id'], source='title'):
+            log.info(f"Proyecto por el título (sin Claude): {p['id']} para {minutes_path.name}")
+        elif not p:
+            log.info(f"Sin proyecto para {minutes_path.name}: Claude no respondió y el título "
+                     f"no nombra ninguno")
+    except Exception as e:
+        log.warning(f"Proyecto por el título: {e}")
 
 
 def add_manual_action(minutes_path: Path, title: str,
@@ -280,14 +351,14 @@ def add_manual_action(minutes_path: Path, title: str,
         else:
             data = {
                 'minutes':      str(minutes_path),
-                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'generated_at': datetime.now(UTC).isoformat(),
                 'actions':      [],
             }
         actions = data.setdefault('actions', [])
         next_index = max((a.get('index', -1) for a in actions), default=-1) + 1
         m = _re.match(r'(\d{4})(\d{2})(\d{2})', minutes_path.stem)
         created_at = (f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m
-                      else datetime.now(timezone.utc).date().isoformat())
+                      else datetime.now(UTC).date().isoformat())
         action = {
             'index':            next_index,
             'type':             'human',
@@ -324,10 +395,12 @@ def set_meeting_project_id(minutes_path: Path, project_id: str) -> bool:
         else:
             data = {
                 'minutes':      str(minutes_path),
-                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'generated_at': datetime.now(UTC).isoformat(),
                 'actions':      [],
             }
         data['project_id'] = project_id or 'none'
+        # Lo eligio el usuario: ni una deteccion ni un reintento de las minutas lo cambian.
+        data['project_source'] = 'manual'
         ap.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         log.info(f"Project set to '{project_id}' for {minutes_path.name}")
         return True
@@ -360,7 +433,8 @@ def detect_projects_for_all_meetings() -> dict:
         if ap.exists():
             try:
                 data = json.loads(ap.read_text(encoding='utf-8'))
-                if 'project_id' in data:
+                # Una suposicion por el titulo se revisa con Claude.
+                if 'project_id' in data and data.get('project_source') != 'title':
                     results[md.name] = data['project_id']
                     _sync_project_folder(md)
                     continue
@@ -370,11 +444,11 @@ def detect_projects_for_all_meetings() -> dict:
         if not ap.exists():
             stub = {
                 'minutes':      str(md),
-                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'generated_at': datetime.now(UTC).isoformat(),
                 'actions':      [],
             }
             ap.write_text(json.dumps(stub, ensure_ascii=False, indent=2), encoding='utf-8')
-        _detect_and_save_project(md, None)
+        _detect_and_save_project(md, None, title_fallback=False)
         _sync_project_folder(md)
         try:
             results[md.name] = json.loads(ap.read_text(encoding='utf-8')).get('project_id', 'none')
@@ -389,7 +463,7 @@ def _save_json(minutes_path: Path, actions, enriched_map):
     from config import ME_NAME
     stem = minutes_path.stem
     m_date = _re.match(r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})', stem)
-    created_at = f"{m_date.group(1)}-{m_date.group(2)}-{m_date.group(3)}" if m_date else datetime.now(timezone.utc).date().isoformat()
+    created_at = f"{m_date.group(1)}-{m_date.group(2)}-{m_date.group(3)}" if m_date else datetime.now(UTC).date().isoformat()
 
     result = []
     for a in actions:
@@ -415,10 +489,28 @@ def _save_json(minutes_path: Path, actions, enriched_map):
         })
 
     ap = get_actions_path(minutes_path)
+    # Al rehacer unas minutas (el reintento de unas 'pending') no se pierde lo que
+    # puso el usuario: sus acciones manuales, con su indice (las tareas lo
+    # referencian), y el proyecto que eligio a mano.
+    prev = {}
+    if ap.exists():
+        try:
+            prev = json.loads(ap.read_text(encoding='utf-8'))
+        except Exception:
+            prev = {}
+    kept = [a for a in prev.get('actions', []) if a.get('manual')]
+    taken = {a.get('index') for a in kept}
+    nxt = max([i for i in taken if isinstance(i, int)] + [a['index'] for a in result], default=-1) + 1
+    for a in result:
+        if a['index'] in taken:
+            a['index'], nxt = nxt, nxt + 1
     data = {
         'minutes':      str(minutes_path),
-        'generated_at': datetime.now(timezone.utc).isoformat(),
-        'actions':      result,
+        'generated_at': datetime.now(UTC).isoformat(),
+        'actions':      result + kept,
     }
+    if prev.get('project_source') == 'manual':
+        data['project_id'] = prev.get('project_id', 'none')
+        data['project_source'] = 'manual'
     ap.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
     log.info(f"Actions JSON guardado: {ap.name} ({len(result)} acciones)")

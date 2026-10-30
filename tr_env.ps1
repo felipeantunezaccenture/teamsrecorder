@@ -2,9 +2,9 @@
 #
 # Una sola implementacion de "donde esta instalado", "que interprete usar" y
 # "como parar/arrancar el daemon". Lo usan watchdog.ps1,
-# restart_after_update.ps1 (llamado por hooks/post-merge) y la skill
-# .claude/skills/noted. Ningun consumidor debe reinventar esta logica
-# ni hardcodear rutas de instalacion.
+# restart_after_update.ps1 (llamado por hooks/post-merge),
+# scripts/restart_noted.ps1 y el comando /update-noted. Ningun consumidor
+# debe reinventar esta logica ni hardcodear rutas de instalacion.
 #
 # Uso:  . (Join-Path $dir "tr_env.ps1")
 
@@ -133,19 +133,77 @@ function Get-TRPython {
 }
 
 
-function Test-TRRecording {
-    # $true si hay una grabacion en curso. Nunca reinicies la app si lo devuelve.
+function Get-TRLivePid {
+    # El PID que guarda un fichero (.lock, .recording_active) si es un Python
+    # vivo, o $null. Es el criterio de main.py (_check_single_instance) para
+    # dar por buena otra instancia: un PID muerto, o reciclado por otro
+    # programa, no cuenta.
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    $id = 0
+    if (-not $raw -or -not [int]::TryParse($raw.Trim(), [ref]$id)) { return $null }
+    $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
+    if ($proc -and $proc.ProcessName -like '*python*') { return $id }
+    return $null
+}
+
+
+function Read-TRPipelineJobs {
+    # Una lectura de lo que hay en marcha. Un fichero a medio escribir (el
+    # daemon lo trunca y lo reescribe) cuenta como vacio; lo tapa la segunda
+    # lectura de Get-TRActiveJobs.
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][int]$DaemonPid
+    )
+
+    $jobs = @()
+    try {
+        $status = Get-Content -LiteralPath (Join-Path $Root '.pipeline_status.json') -Raw -Encoding UTF8 -ErrorAction Stop |
+            ConvertFrom-Json
+        # Where-Object: con un fichero vacio .jobs es $null, y @($null) cuenta 1.
+        $jobs = @($status.jobs | Where-Object { $_ })
+    } catch {}
+
+    # .recording_active vive desde que empieza la grabacion hasta que el WAV
+    # esta escrito. El ultimo tramo, mezclar y guardar (segundos en una reunion
+    # larga), no sale en .pipeline_status.json: la grabacion ya se marco como
+    # terminada y el trabajo aun no ha entrado en la cola. Uno con otro PID es
+    # de una instancia que murio grabando y no se limpio.
+    $grabando = @($jobs | Where-Object { $_.stage -eq 'recording' }).Count -gt 0
+    if (-not $grabando -and (Get-TRLivePid (Join-Path $Root '.recording_active')) -eq $DaemonPid) {
+        $jobs += [pscustomobject]@{ stage = 'recording'; label = 'guardando el audio de la reunion' }
+    }
+    return $jobs
+}
+
+
+function Get-TRActiveJobs {
+    # Lo que un reinicio mataria ahora mismo: grabacion, procesado
+    # (transcribir, minutas, coaching, acciones) o cola. Vacio = se puede
+    # reiniciar. TODO reinicio pasa por aqui: hooks/post-merge
+    # (restart_after_update.ps1), scripts/restart_noted.ps1 y /update-noted.
+    # Cada uno tenia su propia puerta y solo se arreglo una: el 2026-10-13 un
+    # reinicio que solo miraba la grabacion corto el procesado de una reunion
+    # de cliente, y se perdieron su coaching y sus acciones.
+    #
+    # Se lee dos veces, 3 s aparte: entre sacar un trabajo de la cola y
+    # marcarlo como procesando la lista sale vacia un instante. Solo cuenta con
+    # el daemon vivo: si murio a mitad, el fichero se queda con trabajos que ya
+    # nadie va a terminar y no deben impedir arrancarlo.
     param([Parameter(Mandatory = $true)][string]$Root)
 
-    $statusFile = Join-Path $Root '.pipeline_status.json'
-    if (-not (Test-Path $statusFile)) { return $false }
+    $daemon = Get-TRLivePid (Join-Path $Root '.lock')
+    if (-not $daemon) { return @() }
 
-    try {
-        $status = Get-Content $statusFile -Raw -Encoding UTF8 | ConvertFrom-Json
-        return [bool](@($status.jobs | Where-Object { $_.stage -eq 'recording' }).Count)
-    } catch {
-        return $false
+    $jobs = @(Read-TRPipelineJobs -Root $Root -DaemonPid $daemon)
+    if ($jobs.Count -eq 0) {
+        Start-Sleep -Seconds 3
+        $jobs = @(Read-TRPipelineJobs -Root $Root -DaemonPid $daemon)
     }
+    return $jobs
 }
 
 
@@ -207,21 +265,107 @@ function Stop-TRWatchdog {
 }
 
 
+function Test-TRShellLaunch {
+    # Se le puede pedir al Explorador que abra un .vbs y que eso lance wscript:
+    # - hay shell (GetShellWindow) y es un explorer. Sin el, explorer.exe
+    #   arrancaria uno nuevo, hijo de quien llama;
+    # - Windows abre .vbs con wscript.exe, segun su propia resolucion
+    #   (AssocQueryString, la de ShellExecute): cubre UserChoice y Open\Command
+    #   cambiados al Bloc de notas, que si no aparecerian en pantalla;
+    # - Windows Script Host no esta desactivado y VBScript sigue instalado
+    #   (Windows lo va retirando).
+    try {
+        if (-not ('TRShell' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class TRShell {
+    [DllImport("user32.dll")] public static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+    public static extern int AssocQueryString(int flags, int str, string assoc, string extra, StringBuilder outStr, ref uint outLen);
+}
+'@
+        }
+        $hwnd = [TRShell]::GetShellWindow()
+        if ($hwnd -eq [IntPtr]::Zero) { return $false }
+        $shellPid = [uint32]0
+        [void][TRShell]::GetWindowThreadProcessId($hwnd, [ref]$shellPid)
+        if ((Get-Process -Id $shellPid -ErrorAction Stop).ProcessName -ne 'explorer') { return $false }
+        $exe = New-Object System.Text.StringBuilder 520
+        $len = [uint32]520
+        # 2 = ASSOCSTR_EXECUTABLE
+        if ([TRShell]::AssocQueryString(0, 2, '.vbs', 'open', $exe, [ref]$len) -ne 0) { return $false }
+        if ([IO.Path]::GetFileName($exe.ToString()) -ne 'wscript.exe') { return $false }
+    } catch {
+        return $false
+    }
+    foreach ($hive in 'HKEY_CURRENT_USER', 'HKEY_LOCAL_MACHINE') {
+        $wsh = Get-ItemProperty -LiteralPath "Registry::$hive\Software\Microsoft\Windows Script Host\Settings" `
+            -Name Enabled -ErrorAction SilentlyContinue
+        if ($wsh -and "$($wsh.Enabled)" -eq '0') { return $false }
+    }
+    return (Test-Path -LiteralPath (Join-Path $env:WINDIR 'System32\vbscript.dll'))
+}
+
+
+function Start-TRWatchdogViaShell {
+    # Pide al Explorador que abra scripts/start_watchdog.vbs, como el arranque
+    # al iniciar sesion: el watchdog queda hijo del shell y no de quien reinicia.
+    # INCIDENTE (28/10/2026): lanzado con Start-Process desde una sesion de
+    # Claude, el watchdog heredaba su job de Windows; al colgarse y cerrarse la
+    # app de Claude, Noted cayo con ella. Devuelve si se pudo pedir, no si
+    # arranco: el Explorador no lo dice.
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    # El Explorador expande %VAR% (el .vbs no se abriria) y wscript pasa la
+    # ruta larga de un nombre 8.3 (~): Get-TRWatchdogProcess no reconoceria el
+    # watchdog y Start-TRDaemon lanzaria otro. Esas rutas van por el camino de siempre.
+    if ($Root -match '[%~]') { return $false }
+    $vbs = Join-Path $Root 'scripts\start_watchdog.vbs'
+    if (-not (Test-Path -LiteralPath $vbs)) { return $false }
+    if (-not (Test-TRShellLaunch)) { return $false }
+    try {
+        Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList "`"$vbs`"" -ErrorAction Stop | Out-Null
+    } catch {
+        return $false
+    }
+    return $true
+}
+
+
 function Start-TRDaemon {
     # Arranca la app a traves del watchdog, que es el UNICO responsable de
     # lanzar main.py. Arrancar main.py aparte crea una segunda instancia que
     # pelea por el .lock con la que el watchdog acabara de levantar.
+    # El watchdog se pide al Explorador (Start-TRWatchdogViaShell). Si no se
+    # puede, o no aparece en ShellSeconds, se lanza como hijo, como antes: uno
+    # atado a quien reinicia es mejor que ninguno.
     param(
         [Parameter(Mandatory = $true)][string]$Root,
-        [int]$TimeoutSeconds = 30
+        [int]$TimeoutSeconds = 30,
+        [int]$ShellSeconds = 30
     )
 
     if (@(Get-TRWatchdogProcess -Root $Root).Count -eq 0) {
         $wd = Join-Path $Root 'watchdog.ps1'
         if (-not (Test-Path $wd)) { return $false }
-        Start-Process -FilePath 'powershell.exe' `
-            -ArgumentList @('-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $wd) `
-            -WorkingDirectory $Root | Out-Null
+        $viaShell = Start-TRWatchdogViaShell -Root $Root
+        if ($viaShell) {
+            for ($i = 0; $i -lt $ShellSeconds -and @(Get-TRWatchdogProcess -Root $Root).Count -eq 0; $i++) {
+                Start-Sleep -Seconds 1
+            }
+        }
+        if (@(Get-TRWatchdogProcess -Root $Root).Count -eq 0) {
+            # Que se sepa: este Noted muere si se cierra quien lo reinicio.
+            if ($viaShell) { $motivo = "el Explorador no lo arranco en $ShellSeconds s" }
+            else { $motivo = 'no se le puede pedir al Explorador' }
+            Write-Host "Noted: el watchdog se lanza desde aqui ($motivo)." -ForegroundColor Yellow
+            Start-Process -FilePath 'powershell.exe' `
+                -ArgumentList @('-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $wd) `
+                -WorkingDirectory $Root | Out-Null
+        }
     }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)

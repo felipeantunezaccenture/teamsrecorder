@@ -17,6 +17,7 @@ Los textos no se traducen aqui: se devuelven claves i18n y sus parametros, y
 los traduce la UI web con su propio diccionario (web/app.js).
 """
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -244,25 +245,65 @@ def apply_fix(action: str) -> dict:
     return {'ok': False, 'error': f'accion desconocida: {action}'}
 
 
+def _ps_quote(value) -> str:
+    """Literal de PowerShell entre comillas simples. PowerShell tambien toma
+    como comilla simple las tipograficas (U+2018 a U+201B): una ruta como
+    ...\\O\u2019Brien\\... cerraba la cadena. Se duplican todas."""
+    s = str(value)
+    for q in ("'", "\u2018", "\u2019", "\u201a", "\u201b"):
+        s = s.replace(q, q + q)
+    return "'" + s + "'"
+
+
+def _tr_env(script: str, timeout: float) -> subprocess.CompletedProcess:
+    """`script` en un PowerShell con tr_env.ps1 cargado. La puerta de reinicio
+    (Get-TRActiveJobs) y el arranque (Start-TRDaemon) viven alli una sola vez,
+    para el hook post-merge, restart_noted y /update-noted: copiarlos aqui es
+    como divergieron las dos rutas de reinicio el 19/10/2026."""
+    cmd = f". {_ps_quote(PROJECT_DIR / 'tr_env.ps1')}; {script}"
+    return subprocess.run(
+        ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+         '-WindowStyle', 'Hidden', '-Command', cmd],
+        capture_output=True, text=True, timeout=timeout, cwd=str(PROJECT_DIR),
+        creationflags=0x08000000 if os.name == 'nt' else 0,   # CREATE_NO_WINDOW
+    )
+
+
+def _active_jobs() -> int | None:
+    """Trabajos en curso segun Get-TRActiveJobs: grabando, guardando, procesando
+    o en cola. None si no se pudo saber, que para reiniciar cuenta como ocupado."""
+    try:
+        r = _tr_env(f"@(Get-TRActiveJobs -Root {_ps_quote(PROJECT_DIR)}).Count", timeout=60)
+        return int(r.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        log.warning(f"diagnostico: no se pudo consultar si Noted esta trabajando: {e}")
+        return None
+
+
 def _start_watchdog() -> dict:
     """Arranca el vigilante, que a su vez levanta el grabador si hace falta.
 
     Arrancar main.py por nuestra cuenta crearia una segunda instancia peleando
     por el .lock con la que el vigilante acabaria levantando (ver tr_env.ps1).
     Si el grabador ya corre, el vigilante ve el .lock valido y espera pasivo.
+
+    Con Start-TRDaemon y no con un Popen propio: lanzado desde aqui, el
+    vigilante seria hijo de este panel, y Start-TRDaemon se lo pide al
+    Explorador para que no dependa de quien lo arranca (Start-TRWatchdogViaShell).
     """
     script = PROJECT_DIR / 'watchdog.ps1'
     if not script.exists():
         return {'ok': False, 'error': 'watchdog.ps1 no encontrado'}
     try:
-        subprocess.Popen(
-            ['powershell', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-             '-WindowStyle', 'Hidden', '-File', str(script)],
-            cwd=str(PROJECT_DIR),
-        )
-        return {'ok': True}
+        _tr_env(f"Start-TRDaemon -Root {_ps_quote(PROJECT_DIR)} -TimeoutSeconds 2 | Out-Null",
+                timeout=120)
     except Exception as e:
         return {'ok': False, 'error': str(e)}
+    # Lo que cuenta es que este, no que se pidiera: PowerShell puede fallar sin
+    # que el comando lance (una politica de ejecucion, un tr_env.ps1 roto).
+    if not _watchdog_running():
+        return {'ok': False, 'error': 'el vigilante no arranco'}
+    return {'ok': True}
 
 
 def _watchdog_running() -> bool:
@@ -283,6 +324,14 @@ def restart_app() -> dict:
     """
     if _is_recording():
         return {'ok': False, 'reason': 'recording'}
+    # Grabar no es lo unico que un reinicio corta: tambien el procesado y la
+    # cola. El 13/10/2026 un reinicio 39 s despues de las minutas perdio el
+    # coaching y las acciones de una reunion. La puerta es la compartida.
+    jobs = _active_jobs()
+    if jobs is None:
+        return {'ok': False, 'reason': 'unknown'}
+    if jobs > 0:
+        return {'ok': False, 'reason': 'busy'}
 
     if not _watchdog_running():
         started = _start_watchdog()
@@ -302,7 +351,14 @@ def restart_app() -> dict:
 
 def _kill_daemon() -> None:
     """Mata el grabador. Los hijos primero: si muere el padre antes, deja
-    huerfanos con el .lock tomado y el vigilante no puede volver a arrancar."""
+    huerfanos con el .lock tomado y el vigilante no puede volver a arrancar.
+
+    La puerta se vuelve a mirar aqui: entre la de restart_app y este momento
+    pueden pasar mas de 30 s (arrancar el vigilante), y una reunion que
+    empezara en ese rato moriria."""
+    if _is_recording() or _active_jobs() != 0:
+        log.warning("diagnostico: el reinicio se cancela, Noted ha empezado a trabajar")
+        return
     procs = _procs(str(PROJECT_DIR / 'main.py'), ('python',))
     if not procs:
         return

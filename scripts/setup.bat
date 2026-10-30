@@ -41,7 +41,7 @@ echo Verificando imports clave...
 %PYTHON% -c "import pyaudiowpatch; print('pyaudiowpatch OK')"
 echo.
 echo Verificando claude CLI...
-claude --version
+call claude --version
 if errorlevel 1 (
     echo [AVISO] claude CLI no encontrado. Ejecuta:
     echo   npm install -g @anthropic-ai/claude-code

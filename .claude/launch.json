@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "noted-panel-qa",
+      "runtimeExecutable": ".venv\\Scripts\\python.exe",
+      "runtimeArgs": ["scripts/panel_qa_server.py", "--port", "8799"],
+      "port": 8799
+    }
+  ]
+}

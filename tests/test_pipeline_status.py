@@ -75,14 +75,14 @@ def test_la_grabacion_lleva_titulo_y_hora_derivados_del_stem(grabando, leer_esta
     assert job['time'] == '16:16'
 
 
-def test_el_titulo_se_capitaliza_destruyendo_los_acronimos(tray, leer_estado, tr_dirs):
-    """Se fija el comportamiento actual: .title() convierte 'daily_scrum_ABC'
-    en 'Daily Scrum Abc'. Cambiarlo es una decision, no un descuido."""
+def test_el_titulo_conserva_las_mayusculas_y_los_acronimos(tray, leer_estado, tr_dirs):
+    """Solo se sube la primera letra: .title() convertia 'IBP Region RACI' en
+    'Ibp Region Raci' y el titulo ya no coincidia con el del calendario."""
     import time
-    tray._recording_path = ta.RECORDINGS_DIR / '2026-09-17_16-16_daily_scrum_ABC.wav'
+    tray._recording_path = ta.RECORDINGS_DIR / '2026-10-28_17-00_IBP_Region_RACI-Participants_review.wav'
     tray._recording_start = time.time()
     tray._write_status()
-    assert leer_estado()['jobs'][0]['title'] == 'Daily Scrum Abc'
+    assert leer_estado()['jobs'][0]['title'] == 'IBP Region RACI-Participants review'
 
 
 def test_un_stem_sin_titulo_deja_title_en_none(tray, leer_estado, tr_dirs):

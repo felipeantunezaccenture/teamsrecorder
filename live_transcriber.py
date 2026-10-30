@@ -79,14 +79,16 @@ FROM_NOW_ARG = '--from-now'
 STALL_EXIT_S = 600
 
 # Se lanza a los START_DELAY_S de empezar y con el loopback ya arrancado:
-# - no compite con los intentos del worker WASAPI (3 x <=6,5 s) justo cuando
-#   Teams reconfigura el audio;
+# - no compite con los intentos del worker WASAPI justo cuando Teams reconfigura
+#   el audio. Desde 77140da cada intento espera la cabecera hasta 15 s
+#   (audio_recorder._LOOPBACK_HEADER_TIMEOUT): la primera ronda de 3 llega a
+#   unos 50 s, y con 25 se lanzaba en mitad de ella;
 # - una grabacion de pocos segundos no llega a lanzarlo. Medido el 18/10/2026:
 #   un proceso recien nacido deniega el acceso unos segundos, y matarlo en ese
 #   momento lo dejaba suspendido y vivo. No se pierde nada por esperar: lo que
 #   falte lo hace el cierre.
 START_DELAY_S = 20
-LOOPBACK_WAIT_S = 25
+LOOPBACK_WAIT_S = 50
 
 # Bloques del cierre: el mismo tamaño que transcriber._CHUNK_SECS (acota la
 # memoria), cortados en una pausa cerca del limite.
@@ -536,6 +538,36 @@ def _memory_floor_ok() -> bool:
     return st is None or st[1] >= COMMIT_FLOOR_MB
 
 
+# La reserva de memoria no basta: con el pagefile gestionado por Windows, el tope
+# de reserva sube cuando el pagefile crece en el disco. El 26/10/2026 a las 15:56
+# 'medium' cargo porque el pagefile acababa de crecer, y a las 16:06 el disco
+# estaba lleno y la grabacion de la reunion siguiente perdio 11 min. Grabar va
+# antes que transcribir durante la reunion: con poco disco el modelo no se carga
+# (o se suelta) y la reunion se transcribe al colgar.
+DISK_FLOOR_GB = 2.0
+
+
+def _disk_free_and_need(name: str) -> tuple[float | None, float]:
+    """(GB libres en el disco del sistema, GB que pide la reserva del modelo).
+    Nunca menos que el suelo con margen: con 'base' o 'tiny' (1,4-1,6 GB) se
+    cargaria y se soltaria en cada vuelta entre 1,6 y 2 GB libres."""
+    import disk_guard
+    need = max((_MODEL_COMMIT_MB.get(name, 5000) + COMMIT_MARGIN_MB) / 1024, DISK_FLOOR_GB + 0.5)
+    return disk_guard.system_free_gb(), need
+
+
+def _disk_ok(name: str) -> bool:
+    """Hay disco para que el pagefile absorba la reserva del modelo si crece."""
+    free, need = _disk_free_and_need(name)
+    return free is None or free >= need
+
+
+def _disk_floor_ok() -> bool:
+    import disk_guard
+    free = disk_guard.system_free_gb()
+    return free is None or free >= DISK_FLOOR_GB
+
+
 def _work_priority(mode: str) -> str:
     """La prioridad para transcribir. En vivo, normal: medido el 20/10/2026 en
     una reunion real, con 'below' Windows lo trataba como proceso en segundo
@@ -815,6 +847,11 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
             log.warning("live: reserva de memoria por debajo del minimo; descargo el modelo y espero")
             model = None
             gc.collect()
+        if model is not None and not _disk_floor_ok():
+            log.warning(f"live: menos de {DISK_FLOOR_GB:g} GB libres en disco; descargo el modelo "
+                        f"para que la grabacion siga (se transcribira al colgar)")
+            model = None
+            gc.collect()
 
         c = current_ctl()
         if c['mode'] != mode:
@@ -850,6 +887,16 @@ def _run(wav: Path, daemon_pid: int, daemon_ct: float, from_now: bool = False) -
                              f"hacen falta {need_mb} MB; espero (se transcribira al colgar)")
                     waiting_logged = time.monotonic()
                 _write_status(wav, state='waiting_memory', free_mb=free_mb, need_mb=need_mb)
+                time.sleep(5)
+                continue
+            if not _disk_ok(name):
+                free_gb, need_gb = _disk_free_and_need(name)
+                if time.monotonic() - waiting_logged >= WAITING_LOG_EVERY_S:
+                    log.info(f"live: sin disco para cargar '{name}': {free_gb:.1f} GB libres, "
+                             f"hacen falta {need_gb:.1f} GB; espero (se transcribira al colgar)")
+                    waiting_logged = time.monotonic()
+                _write_status(wav, state='waiting_disk', free_gb=round(free_gb, 1),
+                              need_gb=round(need_gb, 1))
                 time.sleep(5)
                 continue
             waiting_logged = -WAITING_LOG_EVERY_S
@@ -994,10 +1041,13 @@ def child_usable(wav: Path, proc=None) -> bool:
     memoria no: el pipeline no debe pausarse esperandolo. 'yielded' si: en modo en
     vivo solo dura los segundos que tarda en enterarse del cambio (el .ctl se
     escribe entero y, si no se puede, no se cambia de modo), y contarlo como no
-    usable dejaba al pipeline cargar 'medium' justo en esa ventana."""
+    usable dejaba al pipeline cargar 'medium' justo en esa ventana. Uno que espera
+    disco tampoco: si el pipeline ya tiene 'medium' cargado, pausarlo toda la
+    reunion no encoge el pagefile y nadie transcribiria. Que el pipeline ceda con
+    poco disco mientras se graba es otra decision (pendiente, 26/10/2026)."""
     if proc is not None and proc.poll() is not None:
         return False
-    return read_status(wav).get('state') not in ('failed', 'exited', 'waiting_memory')
+    return read_status(wav).get('state') not in ('failed', 'exited', 'waiting_memory', 'waiting_disk')
 
 
 def kill(proc=None, wav: Path | None = None, timeout: float = 5.0) -> None:
@@ -1145,6 +1195,32 @@ def _block_end(f, pos: int, end: int, vad, vad_opts) -> int:
 
 def finish_live(wav: Path, on_progress=None, should_cancel=None,
                 should_pause=None, hotwords: str | None = None) -> tuple[str, str] | None:
+    """Ver _finish_live. Un cierre aplazado (TranscriptionDeferred: se graba otra
+    reunion con poco disco o memoria) no cuenta como intento: con
+    FINISH_MAX_ATTEMPTS se rendiria y el pipeline lo transcribiria todo de nuevo.
+    Lo hecho hasta la pausa ya esta en el .live.jsonl."""
+    import transcriber
+    marker = finishing_path(wav)
+    try:
+        before = marker.read_text() if marker.exists() else None
+    except OSError:
+        before = None
+    try:
+        return _finish_live(wav, on_progress=on_progress, should_cancel=should_cancel,
+                            should_pause=should_pause, hotwords=hotwords)
+    except transcriber.TranscriptionDeferred:
+        try:
+            if before is None:
+                marker.unlink(missing_ok=True)
+            else:
+                marker.write_text(before)
+        except OSError:
+            pass
+        raise
+
+
+def _finish_live(wav: Path, on_progress=None, should_cancel=None,
+                 should_pause=None, hotwords: str | None = None) -> tuple[str, str] | None:
     """Cierra el transcript de una grabacion ya parada con lo hecho durante ella.
 
     Aprovecha los trozos hechos con un modelo aceptado (el de siempre; tambien
@@ -1231,7 +1307,7 @@ def finish_live(wav: Path, on_progress=None, should_cancel=None,
                 transcriber._wait_if_paused(should_pause, should_cancel)
                 model, model_name = transcriber._get_model(name), name
                 break
-            except transcriber.TranscriptionCancelled:
+            except (transcriber.TranscriptionCancelled, transcriber.TranscriptionDeferred):
                 raise
             except Exception as e:
                 if not transcriber._is_memory_error(e):
