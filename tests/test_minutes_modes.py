@@ -141,12 +141,14 @@ def test_si_las_minutas_completas_fallan_la_reunion_se_guarda_igual(tray, cierre
     """Revision del 20/10/2026 (ALTO, ya pasaba antes): si Claude no devolvia
     minutas, el cierre hacia return: sin .md la reunion no salia en el panel,
     su transcript no se podia abrir y _recover_pending la reprocesaba en cada
-    arranque. Ahora quedan unas minimas, con "Generar minutas completas"."""
+    arranque. Ahora quedan unas minimas, con "Generar minutas completas", y
+    marcadas 'pending' con su grabacion para que se rehagan solas."""
     monkeypatch.setattr(mg, 'generate_minutes', lambda *a, **k: None)
     cerrar(tray, wav_factory)
     md = cierre['guardadas']
     assert md is not None and md.name.startswith('20261019_1553_')
-    assert mg.brief_mode_of(md.read_text(encoding='utf-8')) == 'off'
+    assert mg.brief_mode_of(md.read_text(encoding='utf-8')) == 'pending'
+    assert mg.pending_stem_of(md.read_text(encoding='utf-8')) == STEM
     assert md.with_name(md.stem + '_transcript.txt').read_text(encoding='utf-8') == TRANSCRIPT
     assert cierre['procesado'] == 1
     assert cierre['enriquecer'] == 0 and cierre['sin_acciones'] == [TRANSCRIPT[:4000]]

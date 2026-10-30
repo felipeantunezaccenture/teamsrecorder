@@ -105,6 +105,10 @@ _FILE_SEAMS = {
     'LOCK_FILE': (('main',), '.lock'),
     'CLI_CONTROL_FILE': (('config', 'cli', 'main'), '.cli_command'),
     'LOG_FILE': (('config', 'cli', 'main'), 'noted.log'),
+    # 29/10/2026: ejecutar la suite con una reunion grabandose borraba el
+    # .recording_active REAL (los tests de AudioRecorder llaman a stop()), y con
+    # el la puerta que impide reiniciar el daemon en mitad de una grabacion.
+    '_RECORDING_SENTINEL': (('audio_recorder',), '.recording_active'),
 }
 
 # Datos reales del usuario que la suite NUNCA debe tocar.
@@ -242,6 +246,15 @@ def sin_outlook_de_verdad(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def sin_claude_de_verdad(monkeypatch):
+    """Ningun test pregunta al claude de la maquina si tiene sesion (`claude
+    auth status`, al fallar unas minutas): la respuesta dependeria de quien
+    corre la suite. Los tests de claude_problem usan la funcion real."""
+    import minutes_generator
+    monkeypatch.setattr(minutes_generator, 'claude_problem', lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def cierre_sin_errores_ocultos(caplog):
     """Un error dentro de _finalize_session vuelve a ser un fallo del test.
 
@@ -300,6 +313,7 @@ def tray_factory(tr_dirs):
         app._whisper_lock = threading.Lock()
         app._ctl_lock = threading.RLock()
         app._yield_seq = 0
+        app._pending_retries = {}
         return app
 
     return make

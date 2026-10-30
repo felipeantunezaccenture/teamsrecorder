@@ -576,7 +576,7 @@ def _generate_via_cli(transcript: str, recording_path: Path, extra_context: str 
             log.error("claude -p timeout (900s)")
             return None
         if proc.returncode != 0:
-            log.error(f"claude -p error (rc={proc.returncode}): {stderr[:500]}")
+            log.error(f"claude -p error (rc={proc.returncode}): {_cli_error(stdout, stderr)[:500]}")
             return None
         return stdout.strip()
     except Exception as e:
@@ -614,12 +614,40 @@ def run_claude(prompt: str, timeout: int = 300) -> str | None:
             log.error(f"claude -p timeout ({timeout}s)")
             return None
         if proc.returncode != 0:
-            log.error(f"claude -p error (rc={proc.returncode}): {stderr[:300]}")
+            log.error(f"claude -p error (rc={proc.returncode}): {_cli_error(stdout, stderr)[:300]}")
             return None
         return (stdout or '').strip() or None
     except Exception as e:
         log.error(f"Error llamando claude CLI: {e}")
         return None
+
+
+def _cli_error(stdout: str | None, stderr: str | None) -> str:
+    """El error de `claude -p`. Lo escribe en stdout ("Failed to authenticate:
+    OAuth session expired...") con stderr vacio: el log del 28/10/2026 decia
+    solo "claude -p error (rc=1): " y no habia forma de saber que pasaba."""
+    return ((stderr or '').strip() or (stdout or '').strip())
+
+
+def claude_problem() -> str | None:
+    """Por que no se puede usar Claude ahora mismo: 'missing' (no se encuentra
+    el CLI), 'no_session' (sin sesion iniciada) o None (parece listo, o no se
+    sabe). Lo dice `claude auth status`, que no gasta tokens."""
+    claude_bin = _get_claude_bin()
+    if not claude_bin:
+        return 'missing'
+    try:
+        import json
+        r = subprocess.run(
+            [claude_bin, 'auth', 'status'], capture_output=True, text=True, encoding='utf-8',
+            timeout=30, env=_clean_env(),
+            creationflags=0x08000000 if os.name == 'nt' else 0,
+        )
+        if json.loads(r.stdout or '{}').get('loggedIn') is False:
+            return 'no_session'
+    except Exception as e:
+        log.info(f"claude auth status no aclara el estado de Claude: {e}")
+    return None
 
 
 def regenerate_actions_section(transcript: str, current_actions_md: str,
@@ -677,7 +705,10 @@ def extract_title_from_minutes(raw_text: str) -> tuple[str, str]:
     return 'Reunion', raw_text
 
 
-_MODE_MARKER = re.compile(r'^<!-- noted:minutes=(summary|off) -->', re.MULTILINE)
+# 'pending': las completas fallaron (Claude sin sesion, sin CLI, sin respuesta) y
+# Noted las reintenta solo. Lleva el stem de su grabacion: es lo que identifica
+# la reunion, porque dos grabaciones del mismo minuto comparten la hora.
+_MODE_MARKER = re.compile(r'^<!-- noted:minutes=(summary|off|pending)(?: stem=(\S+))? -->', re.MULTILINE)
 
 _BRIEF_NOTE = {
     'es': ("_Minutas completas desactivadas en Ajustes. El transcript está en su pestaña, y puedes "
@@ -686,17 +717,44 @@ _BRIEF_NOTE = {
            "generate this meeting's minutes with «Generate full minutes»._"),
 }
 
+_PENDING_NOTE = {
+    'es': ("_No se pudieron generar las minutas completas: {reason}. Noted las generará solo en "
+           "cuanto Claude vuelva a responder, o puedes pedirlas ya con «Generar minutas completas». "
+           "El transcript está en su pestaña._"),
+    'en': ("_The full minutes could not be generated: {reason}. Noted will generate them on its own "
+           "as soon as Claude responds again, or you can ask for them now with «Generate full minutes». "
+           "The transcript is in its tab._"),
+}
 
-def brief_minutes(title: str, mode: str, summary: str | None = None, language: str = 'es') -> str:
-    """Las minutas de los niveles 'summary' y 'off' (decision de Felipe, 19/10/2026).
+_PENDING_REASON = {
+    'es': {'no_session': 'Claude no tenía la sesión iniciada (se arregla con «claude auth login»)',
+           'missing': 'no se encontró Claude Code',
+           None: 'Claude no respondió'},
+    'en': {'no_session': 'Claude was not signed in (fix it with «claude auth login»)',
+           'missing': 'Claude Code was not found',
+           None: 'Claude did not respond'},
+}
+
+
+def brief_minutes(title: str, mode: str, summary: str | None = None, language: str = 'es',
+                  reason: str | None = None, stem: str = '') -> str:
+    """Las minutas de los niveles 'summary' y 'off' (decision de Felipe, 19/10/2026),
+    y las 'pending' que quedan cuando las completas fallan.
 
     Sin ellas la reunion no saldria en el panel (que lista por .md), su
     transcript no se podria abrir y se reprocesaria en cada arranque. Llevan la
     linea TITULO: como las completas, y un marcador ESTRUCTURAL (un comentario
     HTML, invisible al renderizar) que dice que son breves: el panel lo usa para
     ofrecer las completas. summary: lo que devolvio meeting_qa.summarize, o None.
+    reason: lo que devolvio claude_problem(), para 'pending'.
     """
-    note = _BRIEF_NOTE['en' if language == 'en' else 'es']
+    lang = 'en' if language == 'en' else 'es'
+    if mode == 'pending':
+        note = _PENDING_NOTE[lang].format(reason=_PENDING_REASON[lang].get(reason, _PENDING_REASON[lang][None]))
+        marker = f"<!-- noted:minutes=pending stem={stem} -->" if stem else "<!-- noted:minutes=pending -->"
+    else:
+        note = _BRIEF_NOTE[lang]
+        marker = f"<!-- noted:minutes={mode} -->"
     body = ''
     if summary:
         first, _, rest = summary.partition('\n')
@@ -704,13 +762,19 @@ def brief_minutes(title: str, mode: str, summary: str | None = None, language: s
             title = first.removeprefix('TITULO:').strip() or title
             summary = rest.strip()
         body = f"{summary.strip()}\n\n" if summary.strip() else ''
-    return f"TITULO: {title}\n<!-- noted:minutes={mode} -->\n\n{body}{note}\n"
+    return f"TITULO: {title}\n{marker}\n\n{body}{note}\n"
 
 
 def brief_mode_of(md_text: str) -> str | None:
-    """'summary' u 'off' si son minutas breves; None si son completas."""
+    """'summary', 'off' o 'pending' si son minutas breves; None si son completas."""
     m = _MODE_MARKER.search(md_text[:500])
     return m.group(1) if m else None
+
+
+def pending_stem_of(md_text: str) -> str | None:
+    """El stem de la grabacion de unas minutas 'pending', o None."""
+    m = _MODE_MARKER.search(md_text[:500])
+    return m.group(2) if m and m.group(1) == 'pending' else None
 
 
 def save_minutes(minutes: str, output_path: Path) -> bool:
