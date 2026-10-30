@@ -80,7 +80,7 @@ echo.
 if exist "%NODE_DIR%\npm.cmd" (
     "%NODE_DIR%\npm.cmd" install -g @anthropic-ai/claude-code
 ) else (
-    npm install -g @anthropic-ai/claude-code
+    call npm install -g @anthropic-ai/claude-code
 )
 
 if %errorlevel% neq 0 (

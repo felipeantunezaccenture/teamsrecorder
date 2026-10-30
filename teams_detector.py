@@ -189,6 +189,12 @@ class TeamsCallDetector:
         return self._in_call
 
     @property
+    def current_meeting_name(self) -> str | None:
+        """El nombre de la reunion de la llamada en curso, ya sin titulos
+        residuales de reuniones terminadas. None si no hay llamada."""
+        return self._current_meeting_name if self._in_call else None
+
+    @property
     def call_generation(self) -> int:
         return self._call_generation
 
