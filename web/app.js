@@ -273,8 +273,6 @@ const T = {
     live_switch_sent: 'Activando el transcript en vivo…',
     live_switch_failed: 'No se pudo activar el transcript en vivo',
     live_bg_hint: 'Se transcribe en segundo plano con el modelo completo, así que va con retraso. Para verlo al momento, pulsa «Activar en vivo».',
-    live_setting_label: 'Transcribir durante la reunión',
-    live_setting_desc: 'Mientras grabas, se va transcribiendo con el modelo de arriba, sin prisa y sin quitarle recursos a Teams: al colgar queda poco por hacer. Para verlo al momento, elige «Grabar + en vivo» al empezar o «Activar en vivo» durante la grabación. Se aplica desde la siguiente grabación.',
     live_final_label: 'En modo en vivo, guardar el transcript en vivo como definitivo',
     live_final_desc: 'El transcript queda listo segundos después de colgar, pero con la calidad del modelo rápido (small): falla más, sobre todo en términos en inglés. Apagado, lo que se hizo en vivo se rehace con el modelo de arriba.',
     minutes_mode_label: 'Minutas al terminar la reunión',
@@ -285,8 +283,17 @@ const T = {
     actions_setting_label: 'Extraer acciones de las minutas',
     actions_setting_desc: 'Apagado, no se generan ni se muestran. La reunión se sigue archivando en su proyecto.',
     full_minutes_btn: 'Generar minutas completas',
-    ask_setting_label: 'Preguntas sobre la reunión',
     ask_setting_desc: 'Modelo que responde. Sonnet contesta en unos segundos; Opus razona más, pero tarda y cuesta más.',
+    meeting_card_title: 'Transcripción, minutas y preguntas',
+    meeting_card_desc: 'Qué modelo se usa y qué se genera durante y después de cada reunión. Pasa el ratón por ⓘ para ver el detalle.',
+    whisper_label: 'Modelo de transcripción',
+    whisper_short: 'Más grande = más preciso, pero más lento. Se aplica al reiniciar.',
+    live_final_short_label: 'Guardar el transcript en vivo como definitivo',
+    live_final_short: 'Listo al colgar, pero con el modelo rápido (small).',
+    minutes_short: 'El transcript se guarda siempre.',
+    actions_short: 'Apagado, no se generan ni se muestran.',
+    ask_model_label: 'Modelo para preguntas',
+    ask_short: 'Sonnet responde rápido; Opus razona más, pero tarda y cuesta más.',
     ask_model_sonnet: 'Sonnet 5.5 (recomendado)',
     ask_model_opus: 'Opus 5.5 (el más potente, lento)',
     ask_title: 'Pregunta sobre la reunión',
@@ -692,8 +699,6 @@ const T = {
     live_switch_sent: 'Turning on the live transcript…',
     live_switch_failed: 'Could not turn on the live transcript',
     live_bg_hint: 'It is being transcribed in the background with the full model, so it lags behind. To see it as it happens, press “Go live”.',
-    live_setting_label: 'Transcribe during the meeting',
-    live_setting_desc: 'While recording, the meeting is transcribed with the model above, unhurried and without taking resources from Teams, so little is left after the call. To see it as it happens, choose “Record + live” at the start or “Go live” during the recording. Applies from the next recording.',
     live_final_label: 'In live mode, save the live transcript as the final one',
     live_final_desc: 'The transcript is ready seconds after hanging up, but with the faster model’s quality (small): more mistakes, especially on English terms. When off, what was done live is redone with the model above.',
     minutes_mode_label: 'Minutes when the meeting ends',
@@ -704,8 +709,17 @@ const T = {
     actions_setting_label: 'Extract action items from the minutes',
     actions_setting_desc: 'When off, they are neither generated nor shown. The meeting is still filed in its project.',
     full_minutes_btn: 'Generate full minutes',
-    ask_setting_label: 'Questions about the meeting',
     ask_setting_desc: 'Model that answers. Sonnet replies in a few seconds; Opus reasons more, but is slower and costs more.',
+    meeting_card_title: 'Transcription, minutes and questions',
+    meeting_card_desc: 'Which model is used and what is generated during and after each meeting. Hover ⓘ for details.',
+    whisper_label: 'Transcription model',
+    whisper_short: 'Larger = more accurate but slower. Applies after restart.',
+    live_final_short_label: 'Save the live transcript as the final one',
+    live_final_short: 'Ready on hang-up, but with the faster model (small).',
+    minutes_short: 'The transcript is always saved.',
+    actions_short: 'When off, they are not generated or shown.',
+    ask_model_label: 'Model for questions',
+    ask_short: 'Sonnet answers fast; Opus reasons more but is slower and costs more.',
     ask_model_sonnet: 'Sonnet 5.5 (recommended)',
     ask_model_opus: 'Opus 5.5 (most powerful, slow)',
     ask_title: 'Ask about the meeting',
@@ -1110,8 +1124,6 @@ const T = {
     live_switch_sent: 'Activant el transcript en directe…',
     live_switch_failed: 'No s\'ha pogut activar el transcript en directe',
     live_bg_hint: 'Es transcriu en segon pla amb el model complet, així que va amb retard. Per veure-ho al moment, prem «Activar en directe».',
-    live_setting_label: 'Transcriure durant la reunió',
-    live_setting_desc: 'Mentre graves, es va transcrivint amb el model de dalt, sense pressa i sense treure recursos a Teams: en penjar queda poca feina. Per veure-ho al moment, tria «Gravar + en directe» en començar o «Activar en directe» durant la gravació. S\'aplica des de la gravació següent.',
     live_final_label: 'En mode en directe, desar el transcript en directe com a definitiu',
     live_final_desc: 'El transcript queda llest uns segons després de penjar, però amb la qualitat del model ràpid (small): s\'equivoca més, sobretot en termes en anglès. Desactivat, el que es va fer en directe es refà amb el model de dalt.',
     minutes_mode_label: 'Actes en acabar la reunió',
@@ -1122,8 +1134,17 @@ const T = {
     actions_setting_label: 'Extreure accions de les actes',
     actions_setting_desc: 'Desactivat, no es generen ni es mostren. La reunió es continua arxivant al seu projecte.',
     full_minutes_btn: 'Generar actes completes',
-    ask_setting_label: 'Preguntes sobre la reunió',
     ask_setting_desc: 'Model que respon. Sonnet contesta en uns segons; Opus raona més, però triga i costa més.',
+    meeting_card_title: 'Transcripció, actes i preguntes',
+    meeting_card_desc: 'Quin model s\'usa i què es genera durant i després de cada reunió. Passa el ratolí per ⓘ per veure el detall.',
+    whisper_label: 'Model de transcripció',
+    whisper_short: 'Més gran = més precís, però més lent. S\'aplica en reiniciar.',
+    live_final_short_label: 'Desar el transcript en directe com a definitiu',
+    live_final_short: 'Llest en penjar, però amb el model ràpid (small).',
+    minutes_short: 'El transcript es desa sempre.',
+    actions_short: 'Desactivat, no es generen ni es mostren.',
+    ask_model_label: 'Model per a preguntes',
+    ask_short: 'Sonnet respon ràpid; Opus raona més, però triga i costa més.',
     ask_model_sonnet: 'Sonnet 5.5 (recomanat)',
     ask_model_opus: 'Opus 5.5 (el més potent, lent)',
     ask_title: 'Pregunta sobre la reunió',
@@ -1316,6 +1337,7 @@ function applyLang(lang) {
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.placeholder = v;
     else el.textContent = v;
   });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); });
   const si = document.getElementById('search-input');
   if (si) si.placeholder = t('search_ph');
   const trashBtn = document.getElementById('btn-trash');
@@ -3996,10 +4018,8 @@ async function loadRecordingSettings() {
       ta.value = s.teams_chat_message ?? '';
       ta.disabled = !enabled;
     }
-    // Mismos valores por defecto que live_transcriber.background_enabled()/final_enabled().
-    const bgCb = document.getElementById('background-enabled');
+    // Mismos valores por defecto que live_transcriber.final_enabled().
     const finalCb = document.getElementById('live-final-enabled');
-    if (bgCb) bgCb.checked = s.background_transcription !== false;
     if (finalCb) finalCb.checked = s.live_transcript_final === true;
     // Mismos valores por defecto que config.minutes_mode()/actions_enabled() y meeting_qa.qa_model().
     const modeSel = document.getElementById('minutes-mode-select');
@@ -4041,11 +4061,6 @@ function applyActionsVisibility() {
   if (nav) nav.style.display = _actionsEnabled ? '' : 'none';
   const tab = document.getElementById('tab-actions');
   if (tab) tab.style.display = _actionsEnabled ? '' : 'none';
-}
-
-async function saveBackgroundEnabled(enabled) {
-  await pywebview.api.save_settings({ background_transcription: enabled });
-  showToast(t('settings_saved'));
 }
 
 async function saveLiveFinalEnabled(enabled) {
@@ -5938,10 +5953,35 @@ const ASK_POLL_MS = 500;
 // pregunta aun en marcha.
 const ASK_MAX_POLLS = 640;
 
+// La respuesta llega en markdown (**negrita**, listas, `codigo`). Se escapa PRIMERO
+// y solo despues se generan las etiquetas, asi que nada de lo que diga el modelo
+// (ni de lo transcrito) puede colar HTML. Un ** sin cerrar, mientras la respuesta
+// aun llega por trozos, se queda literal hasta que llega su pareja.
+function _askInline(s) {
+  return escHtml(s)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*\w])\*(?!\s)([^*\n]+?)\*(?![*\w])/g, '$1<em>$2</em>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\[(\d{1,3}:\d{2})\]/g, '<span class="live-time">[$1]</span>');
+}
+
 function _askAnswerHtml(text) {
-  return escHtml(text)
-    .replace(/\[(\d{1,3}:\d{2})\]/g, '<span class="live-time">[$1]</span>')
-    .replace(/\n/g, '<br>');
+  const out = [];
+  let items = null;
+  const flush = () => {
+    if (items) out.push(`<ul class="ask-list">${items.join('')}</ul>`);
+    items = null;
+  };
+  for (const raw of String(text).split('\n')) {
+    const li = raw.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (li) { (items = items || []).push(`<li>${_askInline(li[1])}</li>`); continue; }
+    flush();
+    const h = raw.match(/^\s*#{1,6}\s+(.*)$/);
+    if (h) out.push(`<div class="ask-heading">${_askInline(h[1])}</div>`);
+    else if (raw.trim()) out.push(`<div>${_askInline(raw)}</div>`);
+  }
+  flush();
+  return out.join('');
 }
 
 function _askErrorText(err) {
