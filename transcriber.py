@@ -68,14 +68,35 @@ class TranscriptionCancelled(Exception):
     """
 
 
+class TranscriptionDeferred(Exception):
+    """Aplazada para que la grabacion en curso tenga el disco y la memoria.
+
+    26/10/2026, decision de Felipe: grabar va antes que todo. Mientras se graba
+    otra reunion con poco disco o poca memoria, should_pause() devuelve DEFER y la
+    transcripcion se aparta: los finally sueltan el modelo y lo hecho queda en el
+    .partial o en el .live.jsonl. No es un fallo: no se reintenta con otro modelo
+    ni se cae a la API de OpenAI; el pipeline espera y la repite desde lo hecho.
+    """
+
+
+DEFER = 'defer'
+
+
 def _check_cancel(should_cancel) -> None:
     if should_cancel and should_cancel():
         raise TranscriptionCancelled()
 
 
 def _wait_if_paused(should_pause, should_cancel, poll: float = 1.0) -> None:
-    """Espera mientras should_pause() sea cierto, sin dejar de atender la cancelacion."""
-    while should_pause and should_pause():
+    """Espera mientras should_pause() sea cierto, sin dejar de atender la
+    cancelacion. Si devuelve DEFER, lanza TranscriptionDeferred: esperar con el
+    modelo cargado no libera nada."""
+    while should_pause:
+        state = should_pause()
+        if state == DEFER:
+            raise TranscriptionDeferred()
+        if not state:
+            break
         _check_cancel(should_cancel)
         time.sleep(poll)
     _check_cancel(should_cancel)
@@ -437,7 +458,7 @@ def _transcribe_local(audio_path: Path, on_progress=None, on_segment=None,
             return _transcribe_whole(model, audio_path, on_progress=on_progress,
                                      on_segment=on_segment, should_cancel=should_cancel,
                                      should_pause=should_pause, hotwords=hotwords)
-        except TranscriptionCancelled:
+        except (TranscriptionCancelled, TranscriptionDeferred):
             raise
         except Exception as e:
             last_exc = e
@@ -528,6 +549,10 @@ def transcribe(
         except TranscriptionCancelled:
             # Descartada a proposito: no reintentar ni llamar a la API de pago.
             log.info(f"Transcripción cancelada: {audio_path.name}")
+            raise
+        except TranscriptionDeferred:
+            log.info(f"Transcripción aplazada: {audio_path.name} (se está grabando otra "
+                     f"reunión con poco disco o memoria)")
             raise
         except Exception as e:
             log.warning(f"faster-whisper falló ({e}), intentando OpenAI API...")

@@ -338,7 +338,8 @@ def test_el_pipeline_pasa_la_pausa_al_transcriptor(tray, wav, wav_factory, monke
     monkeypatch.setattr(tray, 'set_processing', lambda *_a: None)
     monkeypatch.setattr(tray, '_register_part', lambda *_a: None)
     tray._run_pipeline_sync(wav)
-    assert vistos['should_pause'] == tray._live_priority
+    # La del modo en vivo va dentro (ver test_pipeline_yields: _pipeline_should_pause).
+    assert vistos['should_pause'] == tray._pipeline_should_pause
 
 
 class UnaLinea:
@@ -580,6 +581,9 @@ def proceso(wav, monkeypatch):
     monkeypatch.setattr(lt, '_start_watchdog', lambda *_a: None)
     monkeypatch.setattr(lt, '_memory_ok', lambda _n: True)
     monkeypatch.setattr(lt, '_memory_floor_ok', lambda: True)
+    # Ni del disco de la maquina: con menos de ~6 GB libres esperaria disco.
+    monkeypatch.setattr(lt, '_disk_ok', lambda _n: True)
+    monkeypatch.setattr(lt, '_disk_floor_ok', lambda: True)
     prioridades, eficiencia = [], []
     monkeypatch.setattr(lt, '_set_priority', prioridades.append)
     monkeypatch.setattr(lt, '_opt_out_of_efficiency_mode', lambda: eficiencia.append(1) or True)

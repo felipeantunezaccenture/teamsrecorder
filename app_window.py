@@ -1,5 +1,7 @@
 import atexit
 
+import glob
+
 import json
 
 import logging
@@ -50,7 +52,6 @@ _WEB_DIR = Path(__file__).parent / 'web'
 # Instancia global de la ventana (singleton)
 
 _window = None
-_single_mutex = None   # handle del mutex que impide una segunda ventana
 
 _window_lock = threading.Lock()
 
@@ -90,6 +91,92 @@ _MAX_ASK_SESSIONS = 2
 # Conversaciones cuya vista se cerro: si su pregunta vuelve sin sesion, no se
 # lanza la red de una sola vez (nadie va a ver la respuesta).
 _ask_closed: set = set()
+# El barrido que cierra las sesiones sin usar. Antes solo se miraban al abrir
+# otra conversacion: el 27/10/2026 un panel abierto desde la tarde anterior
+# tenia dos claude (~480 MB de reserva cada uno) con el disco a 0,86 GB.
+_ASK_SWEEP_S = 30
+_ask_sweeper = None
+_ask_yielding = False
+
+
+def _recording_now() -> bool:
+    """.recording_active, si su PID es un Python vivo: si el daemon murio
+    grabando, el archivo se queda hasta la siguiente grabacion. El criterio de
+    Get-TRLivePid (tr_env.ps1)."""
+    try:
+        pid = int((PROJECT_DIR / '.recording_active').read_text(encoding='utf-8').strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        import psutil
+    except ImportError:
+        return True
+    try:
+        return 'python' in psutil.Process(pid).name().lower()
+    except psutil.Error:
+        return False
+
+
+def _ask_yield_reason() -> str | None:
+    """'disco' o 'memoria' si se esta grabando y falta: grabar va antes (decision
+    de Felipe, 26/10/2026), asi que entonces no se deja ningun claude abierto.
+    Los umbrales, los de siempre: el aviso de disco, con su histeresis, y el
+    suelo de memoria del modo de fondo."""
+    global _ask_yielding
+    reason = None
+    if _recording_now():
+        import disk_guard
+        import live_transcriber
+        free = disk_guard.system_free_gb()
+        limit = disk_guard.WARN_CLEAR_GB if _ask_yielding else disk_guard.WARN_GB
+        if free is not None and free < limit:
+            reason = 'disco'
+        elif not live_transcriber._memory_floor_ok():
+            reason = 'memoria'
+    _ask_yielding = reason is not None
+    return reason
+
+
+def _sweep_ask_sessions() -> None:
+    """Cierra las que llevan IDLE_S sin usarse o han muerto y, grabando con poco
+    disco o memoria, todas. Nunca una que este respondiendo."""
+    reason = _ask_yield_reason()
+    to_close = []
+    with _ask_sessions_lock:
+        for k, s in list(_ask_sessions.items()):
+            if not s.busy() and (reason or s.idle() or not s.alive()):
+                to_close.append((k, _ask_sessions.pop(k)))
+    for k, s in to_close:
+        log.info(f"meeting_qa: sesion {k} cerrada ({'grabando con poco ' + reason if reason else 'sin usar'})")
+        s.close()
+
+
+def _ask_sweep_loop() -> None:
+    import time
+    global _ask_sweeper
+    while True:
+        time.sleep(_ASK_SWEEP_S)
+        try:
+            _sweep_ask_sessions()
+        except Exception as e:
+            log.warning(f"meeting_qa: barrido de sesiones: {e}")
+        with _ask_sessions_lock:
+            if not _ask_sessions:
+                _ask_sweeper = None
+                return
+
+
+def _ensure_ask_sweeper() -> None:
+    """Con _ask_sessions_lock tomado: corre mientras haya sesiones abiertas."""
+    global _ask_sweeper
+    if _ask_sweeper is None:
+        t = threading.Thread(target=_ask_sweep_loop, daemon=True, name='AskSweeper')
+        try:
+            t.start()
+        except RuntimeError as e:             # sin memoria: se reintenta con la siguiente sesion
+            log.warning(f"meeting_qa: no se pudo arrancar el barrido de sesiones: {e}")
+            return
+        _ask_sweeper = t
 
 
 def _ask_session(key: str, create: bool = True):
@@ -98,6 +185,7 @@ def _ask_session(key: str, create: bool = True):
     es el de Ajustes. Nunca cierra una que este respondiendo ni la en vivo por
     hacer sitio (revision del 20/10/2026). Los cierres, fuera del lock: cada
     uno puede tardar hasta 3 s."""
+    import time
     import meeting_qa
     import transcriber
     to_close = []
@@ -109,8 +197,11 @@ def _ask_session(key: str, create: bool = True):
         if s is not None and not s.busy() and (not s.alive() or s.model != meeting_qa.qa_model()):
             to_close.append(_ask_sessions.pop(key))
             s = None
-        if s is None and create:
+        if s is not None:
+            s.last_used = time.monotonic()    # pedirla es usarla: que el barrido no la cierre ahora
+        elif create:
             s = _ask_sessions[key] = meeting_qa.Session(me_label=transcriber.ME_NAME or 'Grabador')
+            _ensure_ask_sweeper()
             # Cada sesion es un proceso: como mucho dos abiertas (la de la reunion
             # en curso y la ultima consultada). Si las demas estan ocupadas o son
             # la en vivo, se pasa del tope un rato antes que cortar una respuesta.
@@ -269,7 +360,7 @@ def _pin_key(stem: str) -> str:
 
 
 def _brief_mode(md: Path) -> str | None:
-    """'summary' u 'off' si las minutas son breves (minutes_generator.brief_minutes)."""
+    """'summary', 'off' o 'pending' si las minutas son breves (minutes_generator.brief_minutes)."""
     try:
         with md.open(encoding='utf-8') as f:
             head = f.read(600)
@@ -3439,7 +3530,7 @@ class AppAPI:
 
                         return candidate.read_text(encoding='utf-8')
 
-                for lang_candidate in folder.glob(f"{stem}*.txt"):
+                for lang_candidate in folder.glob(f"{glob.escape(stem)}*.txt"):
 
                     return lang_candidate.read_text(encoding='utf-8')
 
@@ -3516,11 +3607,22 @@ class AppAPI:
 
         def run():
             try:
-                r = _ask_session(key).ask(lines, question, hist, on_text=on_text)
-                if r['error'] == 'session_dead' and key in _ask_closed:
-                    r['error'] = 'closed'
-                elif r['error'] == 'session_dead':
-                    # Red: una sola vez, sin sesion. Paga el arranque, pero responde.
+                # Una sola vez, sin sesion: paga el arranque, pero responde. Es la
+                # red si la sesion muere, y lo de siempre grabando con poco disco
+                # o memoria: asi el claude termina al responder.
+                one_shot = _ask_yield_reason() is not None
+                if one_shot:
+                    # Antes de abrir otro claude, cerrar las que hubiera. Y una que
+                    # siguiera abierta no veria esta pregunta: la siguiente sesion
+                    # arranca con el historial.
+                    _sweep_ask_sessions()
+                else:
+                    r = _ask_session(key).ask(lines, question, hist, on_text=on_text)
+                    if r['error'] == 'session_dead' and key in _ask_closed:
+                        r['error'] = 'closed'
+                    elif r['error'] == 'session_dead':
+                        one_shot = True
+                if one_shot:
                     r = meeting_qa.ask(lines, question, hist, me_label=transcriber.ME_NAME or 'Grabador',
                                        on_text=on_text)
                 state['text'] = r['text'] or state['text']
@@ -3547,8 +3649,9 @@ class AppAPI:
 
     def ask_warmup(self, source: str, ref: str) -> bool:
         """Abre ya la sesion de claude de esa conversacion: arrancar cuesta
-        9,5-12 s, y asi la primera pregunta responde en un par de segundos."""
-        if self._ask_ref_error(source, ref):
+        9,5-12 s, y asi la primera pregunta responde en un par de segundos.
+        Grabando con poco disco o memoria, no: la pregunta ira sin sesion."""
+        if self._ask_ref_error(source, ref) or _ask_yield_reason():
             return False
         threading.Thread(target=_ask_session, args=(f'{source}:{ref}',), daemon=True,
                          name='AskWarmup').start()
@@ -4405,23 +4508,9 @@ def open_app(initial_path: str = None, focus: bool = True):
 
                 nav_file.write_text(initial_path or '', encoding='utf-8')
 
-                if focus and os.name == 'nt':
+                if focus:
 
-                    try:
-
-                        import ctypes
-
-                        hwnd = ctypes.windll.user32.FindWindowW(None, 'Noted')
-
-                        if hwnd:
-
-                            ctypes.windll.user32.ShowWindow(hwnd, 9)
-
-                            ctypes.windll.user32.SetForegroundWindow(hwnd)
-
-                    except Exception:
-
-                        pass
+                    _focus_existing_window()
 
                 return
 
@@ -4496,40 +4585,75 @@ def _set_taskbar_icon(title: str, icon_path: str) -> None:
 
 
 
+# Un solo panel. 26/10/2026: un doble clic en el icono de la bandeja abria dos
+# (pystray lanza "Abrir la aplicacion" en cada WM_LBUTTONUP, y .app_window.pid
+# aun no existia). Mutex con nombre: el patron estandar de Windows, el mismo
+# que usa main.py para el daemon.
+_WINDOW_MUTEX = 'Noted_AppWindow'
+_WINDOW_MUTEX_HANDLE = None
+
+
+def _claim_single_window() -> bool:
+    """True si este proceso es el unico panel. Si no se puede saber, True:
+    mejor abrir de mas que no abrir."""
+    global _WINDOW_MUTEX_HANDLE
+    if os.name != 'nt':
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        handle = k32.CreateMutexW(None, False, _WINDOW_MUTEX)
+        if not handle:
+            return True
+        _WINDOW_MUTEX_HANDLE = handle            # vive lo que viva el proceso
+        return ctypes.get_last_error() != 183    # ERROR_ALREADY_EXISTS
+    except Exception:
+        return True
+
+
+def _focus_existing_window() -> None:
+    if os.name != 'nt':
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.user32.FindWindowW(None, 'Noted')
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 9)        # SW_RESTORE
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def _release_pid_file(pid_file: Path, pid: int) -> None:
+    """Al cerrar, borrar el .app_window.pid solo si es el nuestro: con dos
+    paneles, cerrar uno lo borraba y cada clic siguiente abria otro mas."""
+    try:
+        if pid_file.read_text(encoding='utf-8').strip() == str(pid):
+            pid_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _run_window(initial_path: str = None):
     """Punto de entrada cuando se ejecuta como proceso independiente."""
-    global _window, _single_mutex
-
-    # Exclusion atomica: el .pid solo se escribe tras cargar webview, y dos
-    # open_app() seguidos (dos minutas que terminan a la vez, un clic en la
-    # bandeja) lanzaban dos ventanas antes de que la primera lo escribiera.
-    if os.name == 'nt':
-        try:
-            import ctypes
-            import sys
-            _k32 = ctypes.WinDLL('kernel32', use_last_error=True)
-            _k32.CreateMutexW.restype = ctypes.c_void_p
-            _single_mutex = _k32.CreateMutexW(None, False, r'Local\Noted.AppWindow')
-            if ctypes.get_last_error() == 183:   # ERROR_ALREADY_EXISTS
-                if initial_path:
-                    (PROJECT_DIR / '.app_navigate.txt').write_text(initial_path, encoding='utf-8')
-                hwnd = ctypes.windll.user32.FindWindowW(None, 'Noted')
-                if hwnd:
-                    ctypes.windll.user32.ShowWindow(hwnd, 9)
-                    ctypes.windll.user32.SetForegroundWindow(hwnd)
-                sys.exit(0)
-        except SystemExit:
-            raise
-        except Exception:
-            pass
-
+    global _window
+    if not _claim_single_window():
+        # Ya hay un panel: que vaya a esta reunion (lo lee de .app_navigate.txt)
+        # y se ponga delante. Sin cargar pywebview ni abrir ventana.
+        (PROJECT_DIR / '.app_navigate.txt').write_text(initial_path or '', encoding='utf-8')
+        _focus_existing_window()
+        return
     import webview
     _cleanup_old_tmp_dirs()
 
     pid_file = PROJECT_DIR / '.app_window.pid'
     pid_file.write_text(str(os.getpid()), encoding='utf-8')
     import atexit
-    atexit.register(lambda: pid_file.unlink(missing_ok=True))
+    _my_pid = os.getpid()
+    atexit.register(lambda: _release_pid_file(pid_file, _my_pid))
 
     if os.name == 'nt':
         try:

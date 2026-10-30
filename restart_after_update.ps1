@@ -10,12 +10,21 @@
 $root = $PSScriptRoot
 . (Join-Path $root 'tr_env.ps1')
 
-if (Test-TRRecording -Root $root) {
+# Cualquier trabajo bloquea, no solo la grabacion: ver Get-TRActiveJobs.
+$jobs = @(Get-TRActiveJobs -Root $root)
+if ($jobs.Count -gt 0) {
+    if (@($jobs | Where-Object { $_.stage -eq 'recording' }).Count -gt 0) {
+        $aviso = 'Hay una grabacion en curso. Reinicia la app cuando termine la reunion.'
+    } else {
+        $aviso = 'Noted esta procesando una reunion. Reinicia la app cuando termine.'
+    }
     Write-Host ''
-    Write-Host 'Noted: hay una grabacion en curso.' -ForegroundColor Yellow
-    Write-Host '   Los cambios ya se han descargado. Reinicia la app cuando termine la reunion.' -ForegroundColor Yellow
+    Write-Host "Noted: $aviso" -ForegroundColor Yellow
+    foreach ($j in $jobs) { Write-Host ("   - {0}: {1}" -f $j.stage, $j.label) -ForegroundColor Yellow }
+    Write-Host '   Los cambios ya se han descargado; la app sigue con el codigo anterior hasta reiniciarla:' -ForegroundColor Yellow
+    Write-Host "   powershell -ExecutionPolicy Bypass -File `"$root\restart_after_update.ps1`"" -ForegroundColor Yellow
     Write-Host ''
-    Show-TRNotification -Text 'Hay una grabacion en curso. Reinicia la app cuando termine la reunion.'
+    Show-TRNotification -Text $aviso
     exit 0
 }
 

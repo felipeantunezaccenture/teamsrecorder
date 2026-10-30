@@ -105,6 +105,10 @@ _FILE_SEAMS = {
     'LOCK_FILE': (('main',), '.lock'),
     'CLI_CONTROL_FILE': (('config', 'cli', 'main'), '.cli_command'),
     'LOG_FILE': (('config', 'cli', 'main'), 'noted.log'),
+    # 29/10/2026: ejecutar la suite con una reunion grabandose borraba el
+    # .recording_active REAL (los tests de AudioRecorder llaman a stop()), y con
+    # el la puerta que impide reiniciar el daemon en mitad de una grabacion.
+    '_RECORDING_SENTINEL': (('audio_recorder',), '.recording_active'),
 }
 
 # Datos reales del usuario que la suite NUNCA debe tocar.
@@ -241,6 +245,31 @@ def sin_outlook_de_verdad(monkeypatch):
     monkeypatch.setattr(outlook_sender, '_get_outlook', sin_outlook)
 
 
+@pytest.fixture(autouse=True)
+def sin_claude_de_verdad(monkeypatch):
+    """Ningun test pregunta al claude de la maquina si tiene sesion (`claude
+    auth status`, al fallar unas minutas): la respuesta dependeria de quien
+    corre la suite. Los tests de claude_problem usan la funcion real."""
+    import minutes_generator
+    monkeypatch.setattr(minutes_generator, 'claude_problem', lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def cierre_sin_errores_ocultos(caplog):
+    """Un error dentro de _finalize_session vuelve a ser un fallo del test.
+
+    En la app, _finalize_session recoge cualquier excepcion de su cuerpo y la
+    deja en el log, porque corre en un hilo donde nadie mas la veria. En un test
+    eso la esconde: un cierre que revienta despues de lo que el test comprueba
+    pasaria en verde. El test que provoca el error a proposito lo comprueba y
+    vacia caplog.
+    """
+    yield
+    ocultos = [r.getMessage() for r in caplog.get_records('call')
+               if r.name == 'tray_app' and r.getMessage().startswith('Error cerrando la reuni')]
+    assert not ocultos, ocultos[0]
+
+
 @pytest.fixture
 def tray_factory(tr_dirs):
     """Fabrica TrayApp SIN pasar por __init__, para no arrancar los tres hilos.
@@ -284,6 +313,7 @@ def tray_factory(tr_dirs):
         app._whisper_lock = threading.Lock()
         app._ctl_lock = threading.RLock()
         app._yield_seq = 0
+        app._pending_retries = {}
         return app
 
     return make
