@@ -50,7 +50,22 @@ _LOOPBACK_RETRY_WAIT = 1.5
 # entrar en una llamada Teams reconfigura los dispositivos y abrirlos puede
 # tardar mas de 5 s; con ese limite el worker (vivo, solo lento) se mataba y el
 # log decia "termino con codigo 1", que es el codigo de terminate().
-_LOOPBACK_HEADER_TIMEOUT = 15.0
+_LOOPBACK_HEADER_TIMEOUT = 40.0
+# Aviso al usuario si pasa tanto sin audio del sistema: no hace falta esperar a
+# agotar los intentos (con workers lentos pueden ser minutos).
+_LOOPBACK_WARN_AFTER = 20.0
+# El worker NO se mata a los 15 s para empezar de cero: se lanza otro al lado
+# cada _LOOPBACK_STAGGER s (hasta _LOOPBACK_MAX_WORKERS) y gana el primero que
+# mande la cabecera. El 29/10/2026 cuatro workers seguidos tardaron mas de 15 s
+# (arrancar Python con la CPU saturada) y a cada uno se le mataba justo antes de
+# terminar: 94 s sin audio de los demas, cuando uno solo habria llegado a los 20.
+_LOOPBACK_STAGGER = 4.0
+_LOOPBACK_MAX_WORKERS = 3
+# Un worker "armado" (ver arm_loopback) tiene ya Python cargado: si no responde
+# en tanto, se lanza uno normal a su lado.
+_LOOPBACK_STANDBY_GRACE = 3.0
+# Tras usar el armado, el siguiente se arranca con la reunion ya en marcha.
+_LOOPBACK_REARM_DELAY = 20.0
 # Pasados los intentos iniciales se sigue reintentando cada tanto mientras dure
 # la grabacion: es mejor tener las voces de los demas desde el minuto 5 que no
 # tenerlas nunca.
@@ -129,6 +144,13 @@ class AudioRecorder:
         self._save_event = threading.Event()
         self._save_event.set()
         self._loopback_proc: subprocess.Popen | None = None
+        # Worker de loopback ya arrancado y esperando la orden (arm_loopback).
+        self._standby: subprocess.Popen | None = None
+        self._standby_enabled = False
+        self._standby_lock = threading.Lock()
+        # Ultimo audio del sistema recibido: para rellenar con silencio el hueco
+        # si el worker muere y se relanza en mitad de la reunion.
+        self._loop_t_last: float | None = None
         self._stream: sd.InputStream | None = None
         self._stereo_stream: sd.InputStream | None = None
         # Serializa start(): hay dos llamadores independientes en el mismo
@@ -650,7 +672,8 @@ class AudioRecorder:
             threading.Thread(target=callback, args=() if arg is None else (arg,),
                              daemon=True, name=name).start()
 
-    def _start_loopback_async(self, abort: threading.Event | None = None):
+    def _start_loopback_async(self, abort: threading.Event | None = None,
+                              resume: bool = False):
         """Abre el loopback con reintentos, fuera del hilo de start().
 
         Al entrar en una llamada, Teams y Windows reconfiguran los endpoints y
@@ -664,6 +687,9 @@ class AudioRecorder:
         despertaba con la B ya grabando y le abría un segundo worker encima.
         abort llega de _begin al crear el hilo: leído aquí dentro, un hilo que
         tardara en arrancar podría ver ya el de la reunión siguiente.
+
+        resume=True: el worker murió en mitad de la grabación. Se reutiliza el
+        mismo fichero y el hueco se rellena con silencio (ver _start_wasapi_loopback).
         """
         if abort is None:
             abort = self._writer_abort
@@ -671,15 +697,58 @@ class AudioRecorder:
         def mine() -> bool:
             return self._recording and self._writer_abort is abort
 
+        # El lector lo usa para relanzar el worker si muere (ver _wasapi_reader).
+        mine.abort = abort
+
+        state = {'warned': False}
+        notice_lock = threading.Lock()
+
+        def warn_user(why: str, header: str) -> None:
+            """Una sola vez por episodio: el aviso del usuario y la linea del log."""
+            with notice_lock:
+                if state['warned'] or not mine():
+                    return
+                state['warned'] = True
+            log.error(
+                f"{header} ({why}). La grabación tendrá SOLO tu micrófono hasta que se "
+                f"recupere: si usas auriculares, no se capturará nada de lo que digan "
+                f"los demás. Se sigue intentando."
+            )
+            if self.on_loopback_unavailable:
+                threading.Thread(
+                    target=self.on_loopback_unavailable, args=(why,),
+                    daemon=True, name='LoopbackWarning',
+                ).start()
+
+        # El aviso sale a los _LOOPBACK_WARN_AFTER s sin audio del sistema, no
+        # cuando se agotan los intentos: el 29/10 eso habria sido a los 94 s, y con
+        # workers lentos podria ser mucho mas.
+        notice = threading.Timer(
+            _LOOPBACK_WARN_AFTER,
+            lambda: (not self.loopback_active) and warn_user(
+                self._loopback_error or 'el worker aún no ha abierto el loopback',
+                f"SIN audio del sistema tras {_LOOPBACK_WARN_AFTER:.0f}s"),
+        )
+        notice.daemon = True
+        notice.start()
+        try:
+            self._loopback_attempts(mine, abort, resume, warn_user, state)
+        finally:
+            notice.cancel()
+
+    def _loopback_attempts(self, mine, abort, resume, warn_user, state) -> None:
         reason = 'no se intentó'
         attempt = 0
-        warned = False
         while mine():
             attempt += 1
             self._loopback_error = None
-            if self._start_wasapi_loopback(mine) or (mine() and self._start_stereo_mix_loopback(mine)):
+            if resume:
+                ok = self._start_wasapi_loopback(mine, resume=True)
+            else:
+                ok = self._start_wasapi_loopback(mine)
+            if ok or (not resume and mine() and self._start_stereo_mix_loopback(mine)):
                 self.loopback_active = True
-                if warned:
+                if state['warned']:
                     log.info(f"Audio del sistema recuperado en el intento {attempt}; "
                              f"el tramo anterior solo tiene el micrófono")
                 return
@@ -695,51 +764,187 @@ class AudioRecorder:
                 )
                 abort.wait(_LOOPBACK_RETRY_WAIT)       # un cancel() lo despierta ya
                 continue
-            if not warned:
-                warned = True
-                log.error(
-                    f"SIN audio del sistema tras {_LOOPBACK_ATTEMPTS} intentos ({reason}). "
-                    f"La grabación tendrá SOLO tu micrófono hasta que se recupere: si usas "
-                    f"auriculares, no se capturará nada de lo que digan los demás. "
-                    f"Se sigue reintentando cada {_LOOPBACK_LATE_WAIT:.0f}s."
-                )
-                if self.on_loopback_unavailable:
-                    threading.Thread(
-                        target=self.on_loopback_unavailable, args=(reason,),
-                        daemon=True, name='LoopbackWarning',
-                    ).start()
+            if not state['warned']:
+                warn_user(reason, f"SIN audio del sistema tras {attempt} intentos")
             else:
                 log.warning(f"Loopback sigue sin arrancar (intento {attempt}): {reason}")
             abort.wait(_LOOPBACK_LATE_WAIT)
 
-    def _start_wasapi_loopback(self, still=None) -> bool:
-        """still(): si la grabación que lo pidió sigue siendo la de ahora (ver
-        _start_loopback_async). Sin él, basta con que se esté grabando."""
+    # ── workers de loopback ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _popen_loopback_worker(standby: bool = False) -> subprocess.Popen:
+        # stderr capturado, no descartado: el worker explica ahí por qué no
+        # pudo abrir el loopback y antes ese motivo se perdía, dejando el
+        # fallo invisible en el log.
+        _si = subprocess.STARTUPINFO()
+        _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        _CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
+        return subprocess.Popen(
+            [sys.executable, _LOOPBACK_WORKER] + (['--standby'] if standby else []),
+            stdin=subprocess.PIPE if standby else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            startupinfo=_si if os.name == 'nt' else None,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+
+    def arm_loopback(self) -> None:
+        """Deja un worker de loopback YA ARRANCADO esperando la orden de grabar.
+
+        Arrancar un Python nuevo al entrar en la llamada, justo cuando Teams, el
+        pipeline y la transcripcion compiten por la CPU, tardaba 4-7 s en esta
+        maquina y el 29/10/2026 paso de 15 s cuatro veces seguidas. Armado, el
+        proceso ya tiene el interprete y las librerias cargados y solo le queda
+        abrir los dispositivos (~1 s). Si no esta o no responde, se usa el
+        arranque normal: esto solo acelera, nada depende de ello."""
+        self._standby_enabled = True
+        self._spawn_standby()
+
+    def disarm_loopback(self) -> None:
+        with self._standby_lock:
+            self._standby_enabled = False
+            p, self._standby = self._standby, None
+        if p is not None:
+            self._reap_workers([p], 'desarmado')
+
+    def _spawn_standby(self) -> None:
+        with self._standby_lock:
+            if not self._standby_enabled:
+                return
+            if self._standby is not None and self._standby.poll() is None:
+                return
+            try:
+                self._standby = self._popen_loopback_worker(standby=True)
+            except Exception as e:
+                self._standby = None
+                log.warning(f"No se pudo armar el worker de loopback: {e}")
+
+    def _take_standby(self):
+        """El worker armado listo para usar, ya con la orden enviada, o None."""
+        with self._standby_lock:
+            p, self._standby = self._standby, None
+        if p is None:
+            return None
         try:
-            # stderr capturado, no descartado: el worker explica ahí por qué no
-            # pudo abrir el loopback y antes ese motivo se perdía, dejando el
-            # fallo invisible en el log.
-            _si = subprocess.STARTUPINFO()
-            _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            _CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
-            proc = subprocess.Popen(
-                [sys.executable, _LOOPBACK_WORKER],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                startupinfo=_si if os.name == 'nt' else None,
-                creationflags=_CREATE_NO_WINDOW,
-            )
-            # Leer header con timeout para evitar deadlock si el worker se cuelga
-            header_result = [b'']
-            def _read_header():
-                header_result[0] = proc.stdout.read(8)
-            t = threading.Thread(target=_read_header, daemon=True)
+            if p.poll() is not None:
+                return None
+            p.stdin.write(b'go\n')
+            p.stdin.flush()
+            p.stdin.close()
+        except Exception:
+            self._reap_workers([p], 'armado roto')
+            return None
+        if self._standby_enabled:
+            t = threading.Timer(_LOOPBACK_REARM_DELAY, self._spawn_standby)
+            t.daemon = True
             t.start()
-            t.join(timeout=_LOOPBACK_HEADER_TIMEOUT)
-            header = header_result[0]
-            if not header or len(header) < 8:
-                self._loopback_error = self._drain_worker_error(proc)
-                log.warning(f"WASAPI loopback no arrancó: {self._loopback_error}")
+        return p
+
+    def _reap_workers(self, procs, why: str) -> None:
+        """Cierra los workers sobrantes sin retrasar a quien llama, y deja en el
+        log lo que cada uno dijo por stderr: ahi esta el paso en el que se
+        quedo."""
+        def run():
+            for p in procs:
+                msg = self._drain_worker_error(p)
+                if why != 'desarmado':
+                    log.warning(f"Worker de loopback descartado ({why}): "
+                                f"{msg.replace(chr(10), ' | ')}")
+        threading.Thread(target=run, daemon=True, name='LoopbackReap').start()
+
+    def _race_loopback_workers(self, still=None):
+        """Lanza workers hasta que uno manda la cabecera.
+
+        Devuelve (proc, header, None) o (None, None, motivo). Los que no ganan se
+        cierran. Un worker lento NO se mata para empezar otro: se le suma uno al
+        lado cada _LOOPBACK_STAGGER s, y gana el que llegue primero.
+        """
+        results: queue.Queue = queue.Queue()
+        procs: list = []
+        errors: list[str] = []
+
+        def reader(p):
+            try:
+                h = p.stdout.read(8)
+            except Exception:
+                h = b''
+            results.put((p, h))
+
+        def launch(p):
+            procs.append(p)
+            threading.Thread(target=reader, args=(p,), daemon=True,
+                             name='LoopbackHeader').start()
+
+        t0 = time.monotonic()
+        deadline = t0 + _LOOPBACK_HEADER_TIMEOUT
+        pending = 0
+        cold = 0
+        winner = None
+        next_cold = t0
+        first = self._take_standby()
+        if first is not None:
+            launch(first)
+            pending += 1
+            next_cold = t0 + _LOOPBACK_STANDBY_GRACE
+
+        while winner is None:
+            now = time.monotonic()
+            if now >= next_cold and now < deadline and cold < _LOOPBACK_MAX_WORKERS:
+                try:
+                    launch(self._popen_loopback_worker())
+                    pending += 1
+                    cold += 1
+                except Exception as e:
+                    errors.append(f"no se pudo lanzar el worker: {e}")
+                next_cold = now + _LOOPBACK_STAGGER
+            if still is not None and not still():
+                break
+            if pending == 0 and (now >= deadline or cold >= _LOOPBACK_MAX_WORKERS or errors):
+                break
+            if now >= deadline:
+                break
+            nxt = next_cold if cold < _LOOPBACK_MAX_WORKERS else deadline
+            wait = max(0.05, min(nxt, deadline) - now)
+            try:
+                p, h = results.get(timeout=min(wait, 0.5))
+            except queue.Empty:
+                continue
+            pending -= 1
+            if len(h) == 8:
+                winner = (p, h)
+            else:
+                # Salio sin cabecera (fallo rapido): su motivo, y se deja que el
+                # reintento de fuera lo vuelva a probar tras una pausa corta.
+                procs.remove(p)
+                errors.append(self._drain_worker_error(p))
+                if pending == 0:
+                    break
+
+        losers = [p for p in procs if winner is None or p is not winner[0]]
+        if losers:
+            self._reap_workers(losers, 'sin cabecera a tiempo' if winner is None
+                               else 'otro llegó antes')
+        if winner is not None:
+            return winner[0], winner[1], None
+        if errors:
+            return None, None, errors[-1]
+        return None, None, (f"ningún worker abrió el loopback en "
+                            f"{_LOOPBACK_HEADER_TIMEOUT:.0f}s "
+                            f"({len(procs)} lanzados; dispositivo de audio ocupado o lento)")
+
+    def _start_wasapi_loopback(self, still=None, resume: bool = False) -> bool:
+        """still(): si la grabación que lo pidió sigue siendo la de ahora (ver
+        _start_loopback_async). Sin él, basta con que se esté grabando.
+
+        resume=True: el worker anterior murió con la grabación en marcha. El
+        fichero y su cola siguen abiertos; solo se rellena el hueco con silencio
+        y se engancha el worker nuevo."""
+        try:
+            proc, header, reason = self._race_loopback_workers(still)
+            if proc is None:
+                self._loopback_error = reason
+                log.warning(f"WASAPI loopback no arrancó: {reason}")
                 return False
             sr = struct.unpack('<I', header[:4])[0]
             n_ch = struct.unpack('<I', header[4:8])[0]
@@ -753,9 +958,12 @@ class AudioRecorder:
                     self._loop_sr = sr
                     self._loop_ch = n_ch
                     self._loopback_proc = proc
-                    self._open_loop_writer()
+                    if resume and self._loop_q is not None:
+                        self._resume_loop_writer()
+                    else:
+                        self._open_loop_writer()
                     threading.Thread(
-                        target=self._wasapi_reader, args=(proc, sr, n_ch),
+                        target=self._wasapi_reader, args=(proc, sr, n_ch, still),
                         daemon=True, name='WasapiLoopbackReader',
                     ).start()
             if not vigente:
@@ -799,6 +1007,20 @@ class AudioRecorder:
                     f"(dispositivo de audio ocupado o lento)")
         return f"el worker de loopback terminó con código {code}"
 
+    def _resume_loop_writer(self):
+        """Engancha un worker nuevo al fichero del loopback que ya estaba abierto:
+        el hueco desde el ultimo audio se rellena con silencio para no desalinear
+        las voces."""
+        t_last = self._loop_t_last
+        self._reset_resampler()
+        if t_last is not None and self._loop_q is not None:
+            gap = time.monotonic() - t_last
+            pad = int(gap * SAMPLE_RATE)
+            if pad > 0:
+                self._loop_q.put(np.zeros(pad, dtype=np.float32))
+            log.info(f"Audio del sistema reanudado tras {gap:.1f}s sin él; se rellena con silencio")
+        self._loop_t_last = time.monotonic()
+
     def _open_loop_writer(self):
         """El temporal del loopback se guarda ya en mono y al sample rate del
         micrófono, así la mezcla final es una suma directa bloque a bloque.
@@ -811,6 +1033,7 @@ class AudioRecorder:
         """
         self._close_stale_loop_writer()
         self._loop_q = queue.Queue()
+        self._loop_t_last = time.monotonic()
         self._loop_writer = threading.Thread(
             target=self._writer_loop, args=(self._loop_q, self._tmp_loop, 1, SAMPLE_RATE, 'loop'),
             kwargs={'abort': self._writer_abort}, daemon=True, name='LoopWriter',
@@ -824,7 +1047,7 @@ class AudioRecorder:
                 log.info(f"Loopback arrancó {lag:.1f}s después del micrófono; se compensa")
                 self._loop_q.put(np.zeros(pad, dtype=np.float32))
 
-    def _wasapi_reader(self, proc, sr, n_ch):
+    def _wasapi_reader(self, proc, sr, n_ch, still=None):
         bytes_per_frame = 4 * n_ch
         chunk_size = int(sr * 0.1) * bytes_per_frame
         try:
@@ -836,8 +1059,20 @@ class AudioRecorder:
                 q = self._loop_q
                 if q is not None:
                     q.put(self._to_mic_format(arr, sr, n_ch))
+                    self._loop_t_last = time.monotonic()
         except Exception:
             pass
+        # El worker se acabo. Si la grabacion sigue y este era el worker en uso,
+        # murio por su cuenta (se desconecto la salida, o se cayo): se relanza y
+        # el hueco se rellena con silencio. Antes el audio de los demas se perdia
+        # ahi hasta el final de la reunion, sin aviso.
+        abort = getattr(still, 'abort', None)
+        if (abort is not None and still() and proc is self._loopback_proc
+                and not abort.is_set()):
+            log.warning("El worker de loopback terminó con la grabación en marcha; se relanza")
+            self.loopback_active = False
+            threading.Thread(target=self._start_loopback_async, args=(abort, True),
+                             daemon=True, name='LoopbackResume').start()
 
     def _reset_resampler(self):
         self._loop_carry = np.zeros(0, dtype=np.float32)

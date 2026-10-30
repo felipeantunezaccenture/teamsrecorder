@@ -2,40 +2,65 @@
 Subprocess aislado para captura WASAPI loopback.
 Protocolo stdout: 4 bytes samplerate (uint32 LE) + 4 bytes channels (uint32 LE) + stream float32 raw.
 
-El header se escribe SOLO despues de abrir el stream con exito: si se escribiera
+El header se escribe SOLO despues de abrir un stream con exito: si se escribiera
 antes, el padre daria el loopback por arrancado y se quedaria esperando un audio
 que nunca llega, grabando solo el microfono sin avisar.
 
-Todo fallo se explica por stderr. El padre lo registra en el log; sin esto, el
-worker moria en silencio y no habia forma de saber por que una reunion se grabo
-sin el audio de los demas.
+Todo fallo se explica por stderr, y cada paso deja una linea con su tiempo
+("[ 0.6s] PortAudio listo"). El 29/10/2026 el worker se colgo 90 s al entrar en
+una llamada y el log solo decia "no abrio en 15s": sin saber en que paso, no
+habia forma de arreglarlo.
 
 MULTI-SALIDA
 Windows solo marca UNA salida como "por defecto", pero Teams puede sonar por
-otra (altavoz de conferencias, auriculares Bluetooth...). Capturar solo el
-loopback de la salida por defecto grababa silencio en ese caso. Ahora se abre el
-loopback de TODAS las salidas disponibles y se mezclan en un unico flujo mono:
-una salida en silencio no aporta nada y la que use Teams si. Si solo se consigue
-abrir un dispositivo se usa el camino directo de siempre (sin mezcla), y si no
-se abre ninguno se falla como antes.
+otra (altavoz de conferencias, auriculares Bluetooth...). Se abre el loopback de
+TODAS las salidas y se mezclan en un unico flujo mono a 48 kHz.
+
+CADA SALIDA SE ABRE EN SU HILO. Desde el 22/10 se abrian una tras otra y la
+mezcla no empezaba hasta tener todas: una salida que tarda (el altavoz del
+portatil mientras Teams reconfigura el audio) retenia la cabecera, y con ella
+el audio de los demas. Ahora la cabecera sale con la PRIMERA salida que abre y
+las demas se unen a la mezcla cuando estan listas.
+
+El worker termina cuando ya no queda ninguna salida activa (p. ej. se desconecto
+el dispositivo): el padre lo relanza y se vuelve a enumerar.
 """
-import queue
+import os
 import struct
 import sys
 import threading
 import time
 
-import numpy as np
+_T0 = time.monotonic()      # antes de numpy: su carga tambien cuenta
+
+import numpy as np  # noqa: E402
 
 MIX_SR = 48000          # frecuencia del flujo mezclado
 MIX_TICK = 0.1          # segundos de audio emitidos por iteracion
 MAX_BUFFER_S = 1.0      # tope por dispositivo antes de descartar lo mas antiguo
 
 
+_TRACES = [0]
+
+
+def trace(msg: str):
+    """Una linea por paso, con su tiempo. El padre solo lee stderr al terminar
+    el worker, y una tuberia sin lector se llena: por eso hay tope."""
+    if _TRACES[0] >= 40:
+        return
+    _TRACES[0] += 1
+    try:
+        sys.stderr.write(f"[{time.monotonic() - _T0:5.1f}s] {msg}\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 def fail(msg: str):
-    sys.stderr.write(msg)
-    sys.stderr.flush()
-    sys.exit(1)
+    trace(msg)
+    # os._exit y no sys.exit: con PortAudio abierto, el cierre normal del
+    # interprete se quedaba colgado y el worker no terminaba nunca.
+    os._exit(1)
 
 
 class Resampler:
@@ -163,126 +188,140 @@ def _emit_header(sr: int, n_ch: int):
 
 
 def main():
+    trace("arranca")
     try:
         import pyaudiowpatch as pyaudio
     except ImportError as e:
         fail(f"pyaudiowpatch no disponible: {e}")
+    trace("pyaudiowpatch importado")
+
+    if '--standby' in sys.argv:
+        # Worker "armado": el interprete y las librerias ya estan cargados, y
+        # espera la orden del padre. Arrancar un Python nuevo al entrar en la
+        # llamada tardaba 4-7 s con la CPU cargada (python -c pass: 1,5-2 s), y
+        # el 29/10 pasaron de 15 s cuatro veces seguidas. PortAudio se inicia
+        # DESPUES de la orden para enumerar las salidas de ese momento.
+        trace("en espera")
+        try:
+            orden = sys.stdin.readline()
+        except Exception:
+            orden = ''
+        if not orden.strip().startswith('go'):
+            os._exit(0)
+        trace("orden recibida")
 
     pa = pyaudio.PyAudio()
+    trace("PortAudio listo")
     candidates = _list_candidates(pa, pyaudio)
+    trace(f"{len(candidates)} salida(s): " + ", ".join(f"'{c['name']}'" for c in candidates))
 
-    # Estado compartido con los callbacks. Los streams se abren SIN arrancar:
-    # el header tiene que salir antes que cualquier muestra y solo se sabe como
-    # emitir (directo o mezcla) cuando se conoce cuantos dispositivos abrieron.
-    state = {'mode': None}
-    opened = []   # (info, stream, DeviceBuffer, n_ch, sr)
+    lock = threading.Lock()
+    header_sent = threading.Event()
+    stopping = threading.Event()
+    started = []          # (dev, stream, DeviceBuffer) ya en la mezcla
     errors = []
+    pending = [len(candidates)]
 
-    for dev in candidates:
-        n_ch = min(int(dev['maxInputChannels']), 2)
-        if n_ch < 1:
-            errors.append(f"'{dev['name']}': sin canales de entrada")
-            continue
-        sr = int(dev['defaultSampleRate'])
-        buf = DeviceBuffer(dev['name'], sr, n_ch)
-
-        def make_callback(buf):
-            def callback(in_data, frame_count, time_info, status):
-                if state['mode'] == 'direct':
-                    sys.stdout.buffer.write(in_data)
-                    sys.stdout.buffer.flush()
-                elif state['mode'] == 'mix':
-                    buf.push(in_data)
-                return (None, pyaudio.paContinue)
-            return callback
-
-        try:
-            stream = pa.open(
-                format=pyaudio.paFloat32,
-                channels=n_ch,
-                rate=sr,
-                input=True,
-                input_device_index=dev['index'],
-                frames_per_buffer=int(sr * 0.1),
-                stream_callback=make_callback(buf),
-                start=False,
-            )
-        except Exception as e:
-            errors.append(f"'{dev['name']}': {e}")
-            continue
-        opened.append((dev, stream, buf, n_ch, sr))
-
-    if not opened:
-        pa.terminate()
-        fail("ningun dispositivo loopback se pudo abrir -> " + " | ".join(errors))
-
-    if len(opened) == 1:
-        # Camino directo, identico al de siempre.
-        dev, stream, _buf, n_ch, sr = opened[0]
-        state['mode'] = 'direct'
-        _emit_header(sr, n_ch)
-        stream.start_stream()
-        sys.stderr.write(f"loopback activo: '{dev['name']}' ({sr}Hz, {n_ch}ch)")
-        sys.stderr.flush()
-        try:
-            while stream.is_active():
-                time.sleep(0.1)
-        except Exception:
-            pass
-        finally:
-            stream.stop_stream()
-            stream.close()
-            pa.terminate()
-        return
-
-    # Varios dispositivos: se mezclan en un flujo mono a MIX_SR.
-    _emit_header(MIX_SR, 1)
-    state['mode'] = 'mix'
-    started = []
-    for dev, stream, buf, n_ch, sr in opened:
-        try:
-            stream.start_stream()
+    def attach(dev, stream, buf):
+        with lock:
+            if stopping.is_set():
+                return False
             started.append((dev, stream, buf))
-        except Exception as e:
-            errors.append(f"'{dev['name']}': {e}")
-    if not started:
-        # El header ya salio: sin streams el padre solo vera silencio, pero que
-        # quede dicho en stderr.
-        pa.terminate()
-        fail("ningun loopback arranco tras abrirse -> " + " | ".join(errors))
+            if not header_sent.is_set():
+                _emit_header(MIX_SR, 1)
+                header_sent.set()
+        return True
 
-    names = ", ".join(f"'{d['name']}'" for d, _s, _b in started)
-    sys.stderr.write(f"loopback activo (mezcla de {len(started)}): {names}")
-    if errors:
-        sys.stderr.write(" | omitidos: " + " | ".join(errors))
-    sys.stderr.flush()
+    def open_one(dev):
+        stream = None
+        try:
+            n_ch = min(int(dev['maxInputChannels']), 2)
+            if n_ch < 1:
+                raise RuntimeError("sin canales de entrada")
+            sr = int(dev['defaultSampleRate'])
+            buf = DeviceBuffer(dev['name'], sr, n_ch)
 
-    # Se emite al ritmo del reloj, no al de los dispositivos: WASAPI no entrega
-    # nada mientras una salida esta en silencio y esperar a todas los streams
-    # bloquearia la mezcla.
-    n = int(MIX_SR * MIX_TICK)
-    t_next = time.monotonic()
-    try:
-        while any(s.is_active() for _d, s, _b in started):
-            t_next += MIX_TICK
-            wait = t_next - time.monotonic()
-            if wait > 0:
-                time.sleep(wait)
-            elif wait < -1.0:
-                t_next = time.monotonic()
-            block = mix_blocks([b.pop(n) for _d, _s, b in started], n)
-            sys.stdout.buffer.write(block.tobytes())
-            sys.stdout.buffer.flush()
-    except Exception:
-        pass
-    finally:
-        for _d, stream, _b in started:
-            try:
+            def callback(in_data, frame_count, time_info, status):
+                buf.push(in_data)
+                return (None, pyaudio.paContinue)
+
+            trace(f"abriendo '{dev['name']}'")
+            stream = pa.open(
+                format=pyaudio.paFloat32, channels=n_ch, rate=sr, input=True,
+                input_device_index=dev['index'], frames_per_buffer=int(sr * 0.1),
+                stream_callback=callback, start=False,
+            )
+            stream.start_stream()
+            if attach(dev, stream, buf):
+                trace(f"activa '{dev['name']}' ({sr}Hz, {n_ch}ch)")
+            else:
                 stream.stop_stream()
                 stream.close()
+        except Exception as e:
+            errors.append(f"'{dev['name']}': {e}")
+            trace(f"fallo '{dev['name']}': {e}")
+            try:
+                if stream is not None:
+                    stream.close()
             except Exception:
                 pass
-        pa.terminate()
+        finally:
+            with lock:
+                pending[0] -= 1
+
+    def mixer():
+        # Se emite al ritmo del reloj, no al de los dispositivos: WASAPI no
+        # entrega nada mientras una salida esta en silencio y esperar a todos
+        # los streams bloquearia la mezcla.
+        n = int(MIX_SR * MIX_TICK)
+        t_next = time.monotonic()
+        try:
+            while True:
+                with lock:
+                    live = []
+                    for item in started:
+                        try:
+                            if item[1].is_active():
+                                live.append(item)
+                        except Exception:
+                            pass
+                    if len(live) != len(started):
+                        trace(f"salidas activas: {len(live)} de {len(started)}")
+                        started[:] = live
+                    snapshot = list(started)
+                if not snapshot:
+                    trace("ya no queda ninguna salida activa: termino para que me relancen")
+                    break
+                t_next += MIX_TICK
+                wait = t_next - time.monotonic()
+                if wait > 0:
+                    time.sleep(wait)
+                elif wait < -1.0:
+                    t_next = time.monotonic()
+                block = mix_blocks([b.pop(n) for _d, _s, b in snapshot], n)
+                sys.stdout.buffer.write(block.tobytes())
+                sys.stdout.buffer.flush()
+        except Exception as e:
+            trace(f"fin: {e}")
+        sys.stderr.flush()
+        # Sin cierre ordenado de PortAudio: el proceso se va y Windows libera
+        # los streams; cerrarlos desde aqui podia bloquearse.
+        os._exit(0)
+
+    mixer_thread = threading.Thread(target=mixer, daemon=True, name="mixer")
+
+    # Las salidas se abren en ESTA hebra (la principal) y una tras otra. Probado
+    # el 29/10: abrirlas desde otra hebra o a la vez falla siempre con
+    # "Unanticipated host error" (-9999), porque WASAPI necesita la hebra en la
+    # que se inicializo PortAudio. La mezcla corre aparte; la primera salida que
+    # abre da la cabecera y las demas se unen despues, sin retenerla.
+    for dev in candidates:
+        open_one(dev)
+        if header_sent.is_set() and not mixer_thread.is_alive():
+            mixer_thread.start()
+    if not header_sent.is_set():
+        fail("ningun dispositivo loopback se pudo abrir -> " + " | ".join(errors))
+    mixer_thread.join()
 
 
 if __name__ == '__main__':

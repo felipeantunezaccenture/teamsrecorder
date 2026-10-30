@@ -105,6 +105,10 @@ _FILE_SEAMS = {
     'LOCK_FILE': (('main',), '.lock'),
     'CLI_CONTROL_FILE': (('config', 'cli', 'main'), '.cli_command'),
     'LOG_FILE': (('config', 'cli', 'main'), 'noted.log'),
+    # 29/10/2026: ejecutar la suite con una reunion grabandose borraba el
+    # .recording_active REAL (los tests de AudioRecorder llaman a stop()), y con
+    # el la puerta que impide reiniciar el daemon en mitad de una grabacion.
+    '_RECORDING_SENTINEL': (('audio_recorder',), '.recording_active'),
 }
 
 # Datos reales del usuario que la suite NUNCA debe tocar.

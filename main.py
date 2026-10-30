@@ -166,6 +166,9 @@ def main():
         recorder.on_write_recovered = tray.warn_disk_recovered
         recorder.on_save_failed = tray.warn_save_failed
         recorder.on_mic_unavailable = tray.warn_mic_unavailable
+        # Worker de loopback ya cargado y a la espera: al entrar en la llamada
+        # no hay que arrancar Python con la CPU saturada (ver arm_loopback).
+        recorder.arm_loopback()
 
         _popup_active      = [False]   # guard para evitar popups múltiples
         _active_generation = [None]    # generación capturada en el último on_call_started
@@ -299,6 +302,7 @@ def main():
         _bs("calling tray.start() — main thread blocks here")
         tray.start()  # bloquea el hilo principal (requerido por pystray en Windows)
         _bs("tray.start() returned — process will exit")
+        recorder.disarm_loopback()
 
     except Exception as e:
         _bs(f"EXCEPTION in main(): {type(e).__name__}: {e}")
