@@ -1288,6 +1288,21 @@ class TrayApp:
         name = re.sub(r'__\d+$', '', m.group(1)).replace('_', ' ').strip()
         return name if self._is_meeting_title(name) else None
 
+    def _recording_meeting_name(self, wav_path: Path) -> str | None:
+        """El nombre de reunion de una grabacion: el del fichero o, si no lo
+        lleva, el titulo de Teams apuntado en su <stem>.title."""
+        name = self._stem_meeting_name(wav_path.stem)
+        if name:
+            return name
+        for folder in dict.fromkeys((wav_path.parent, RECORDINGS_DIR, RECORDINGS_DIR / 'processed')):
+            try:
+                title = (folder / f'{wav_path.stem}.title').read_text(encoding='utf-8').strip()
+            except OSError:
+                continue
+            if self._is_meeting_title(title):
+                return title
+        return None
+
     def _fallback_title(self, parts: list, s: dict, use_outlook: bool = False) -> str:
         """El titulo de una reunion sin el de Claude, siempre uno que la distinga:
         el nombre de Teams de cualquiera de sus grabaciones (el del fichero o su
@@ -1472,10 +1487,10 @@ class TrayApp:
                     from datetime import datetime as _dt
                     _rec_time = _dt(int(_pm.group(1)), int(_pm.group(2)), int(_pm.group(3)),
                                     int(_pm.group(4)), int(_pm.group(5)))
-                    _pnm = re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_(.+)', wav_path.stem)
-                    _rec_name = _pnm.group(1).replace('_', ' ') if _pnm else None
-                    if _rec_name and _rec_name.strip().lower() in ('manual', 'recording'):
-                        _rec_name = None
+                    # El nombre del fichero o, si es 'manual', el titulo de Teams
+                    # apuntado en <stem>.title: sin nombre se empareja solo por
+                    # hora y con dos citas a las 11:00 ganaba la equivocada.
+                    _rec_name = self._recording_meeting_name(wav_path)
                     participants = find_meeting_participants(_rec_time, meeting_name=_rec_name)
                     log.info(f"Participantes detectados: {len(participants)}")
             except Exception as e:
